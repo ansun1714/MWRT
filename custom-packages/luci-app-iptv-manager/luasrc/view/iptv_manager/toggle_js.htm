@@ -1,0 +1,33 @@
+<script type="text/javascript">
+(function () {
+    "use strict";
+
+    var MSD_MAP_ID    = "cbi-msd_lite";
+    var RTP_MAP_ID    = "cbi-rtp2httpd";
+    var SELECTOR_NAME = "cbid.iptv_manager.global.program";
+
+    function toggle(value) {
+        var msdMap = document.getElementById(MSD_MAP_ID);
+        var rtpMap = document.getElementById(RTP_MAP_ID);
+
+        if (value === "msd") {
+            if (msdMap) msdMap.style.display = "";
+            if (rtpMap) rtpMap.style.display = "none";
+        } else {
+            if (msdMap) msdMap.style.display = "none";
+            if (rtpMap) rtpMap.style.display = "";
+        }
+    }
+
+    function init() {
+        var sel = document.querySelector('[name="' + SELECTOR_NAME + '"]');
+        if (!sel) return;
+        toggle(sel.value);
+        sel.addEventListener("change", function () { toggle(this.value); });
+    }
+
+    document.readyState === "loading"
+        ? document.addEventListener("DOMContentLoaded", init)
+        : init();
+})();
+</script>

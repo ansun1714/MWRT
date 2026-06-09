@@ -1,0 +1,145 @@
+name: Build IPTV Manager Bundle IPK
+
+on:
+  push:
+    tags: [ 'bundle-v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号，例如 1.0.1'
+        required: false
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-bundle:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/bundle-v* ]]; then
+            VER="${{ github.ref_name }}"
+            VER="${VER#bundle-v}"
+          else
+            VER="1.0.$(date +%Y%m%d%H%M)"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "构建版本：$VER"
+
+      - name: Prepare packages
+        run: |
+          # gh-action-sdk 把工作区根目录当 feed
+          # 把三个包都放在根目录，让 action 自动发现
+
+          # 1. 我们的 LuCI 界面
+          cp -r custom-packages/luci-app-iptv-manager .
+
+          # 2. msd_lite（ximiTech 版，含 OpenWrt Makefile）
+          git clone --depth=1 \
+            https://github.com/ximiTech/msd_lite \
+            msd_lite
+
+          # 3. rtp2httpd（stackia 版，直接 clone 到根目录而非通过 EXTRA_FEEDS）
+          #    避免容器内二次 feeds update 失败（exit code 25）
+          git clone --depth=1 \
+            https://github.com/stackia/rtp2httpd \
+            rtp2httpd
+
+          echo "--- 工作区包目录 ---"
+          ls -la luci-app-iptv-manager/ msd_lite/ rtp2httpd/ | head -5
+
+      - name: Build packages
+        uses: openwrt/gh-action-sdk@v7
+        env:
+          # 目标架构：MediaTek Filogic / MT7981 / WH3000 Pro
+          ARCH: aarch64_cortex-a53-23.05.5
+          # 要构建的包（gh-action-sdk 会在工作区 feed 中查找）
+          PACKAGES: luci-app-iptv-manager msd_lite rtp2httpd
+          # 本仓库 feed 名称（所有包都在工作区，无需 EXTRA_FEEDS）
+          FEEDNAME: iptv_bundle
+          NO_DEFAULT_FEEDS: 0
+          V: s
+
+      - name: Collect built IPKs
+        run: |
+          mkdir -p built-ipks
+
+          find "$GITHUB_WORKSPACE" -name "*.ipk" 2>/dev/null \
+            | grep -E "(rtp2httpd|msd_lite|luci-app-iptv-manager)" \
+            | while read -r f; do
+                echo "  收集: $(basename "$f")"
+                cp "$f" built-ipks/ 2>/dev/null || true
+              done
+
+          echo "--- 收集到的 IPK ---"
+          ls -lh built-ipks/ || echo "❌ 没有找到 IPK 文件"
+
+      - name: Bundle into single IPK
+        run: |
+          if [ -z "$(ls built-ipks/*.ipk 2>/dev/null)" ]; then
+            echo "❌ built-ipks 目录为空，无法打包"
+            exit 1
+          fi
+
+          chmod +x custom-packages/build-bundle.sh
+          custom-packages/build-bundle.sh \
+            "${{ steps.ver.outputs.version }}" \
+            "aarch64_cortex-a53" \
+            "built-ipks" \
+            "$GITHUB_WORKSPACE"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iptv-manager-bundle-${{ steps.ver.outputs.version }}
+          path: "iptv-manager-bundle_*.ipk"
+          retention-days: 90
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/bundle-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "IPTV Manager Bundle v${{ steps.ver.outputs.version }}"
+          draft: false
+          prerelease: false
+          files: "iptv-manager-bundle_*.ipk"
+          body: |
+            ## IPTV Manager Bundle v${{ steps.ver.outputs.version }}
+
+            **一键安装包**，包含 msd_lite、rtp2HTTPd 主程序及 LuCI 管理界面。
+
+            ### 适用设备
+            架构：`aarch64_cortex-a53`（MediaTek Filogic / MT7981，WH3000 Pro 等）
+
+            ### 安装方式
+            将 IPK 上传到路由器后 SSH 执行：
+            ```sh
+            opkg install /tmp/iptv-manager-bundle_*.ipk
+            ```
+            安装后刷新浏览器，「服务」→「IPTV 管理」。
+
+            ### 卸载
+            ```sh
+            opkg remove iptv-manager-bundle
+            ```
+
+            ---
+
+            ### 引用的开源项目
+
+            | 组件 | 来源 | 说明 |
+            |---|---|---|
+            | **rtp2httpd** | [stackia/rtp2httpd](https://github.com/stackia/rtp2httpd) | RTP/UDP 组播 → HTTP 代理 |
+            | **msd_lite** | [ximiTech/msd_lite](https://github.com/ximiTech/msd_lite) | 轻量级组播转发 |
+            | **LuCI 界面** | 本仓库 | 二合一统一管理界面 |
+
+            本项目 LuCI 界面为原创开发，主程序二进制编译自上述开源仓库，遵循各原项目开源协议。

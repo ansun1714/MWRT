@@ -1,0 +1,92 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=15
+USE_PROCD=1
+
+CONFIG_NAME="iptv_manager"
+
+_load_global() {
+	config_get ENABLED global enabled '0'
+	config_get PROGRAM global program 'rtp2httpd'
+}
+
+# ── msd_lite ──────────────────────────────────────────────────
+# UCI 结构：/etc/config/msd_lite，section 名 = config，启用选项 = enable
+
+_start_msd() {
+	if [ ! -f /etc/init.d/msd_lite ]; then
+		logger -t iptv_manager -p daemon.err "找不到 /etc/init.d/msd_lite"
+		return 1
+	fi
+	# 正确路径：msd_lite.config.enable（不是 msd_lite.msd_lite.enabled）
+	uci -q set msd_lite.config.enable='1'
+	uci -q commit msd_lite
+	/etc/init.d/msd_lite start
+	logger -t iptv_manager -p daemon.info "启动 msd_lite"
+}
+
+_stop_msd() {
+	[ -f /etc/init.d/msd_lite ] && /etc/init.d/msd_lite stop
+	uci -q set msd_lite.config.enable='0'
+	uci -q commit msd_lite
+	logger -t iptv_manager -p daemon.info "停止 msd_lite"
+}
+
+# ── rtp2HTTPd ─────────────────────────────────────────────────
+
+_start_rtp2httpd() {
+	if [ ! -f /etc/init.d/rtp2httpd ]; then
+		logger -t iptv_manager -p daemon.err "找不到 /etc/init.d/rtp2httpd"
+		return 1
+	fi
+	uci -q set rtp2httpd.@rtp2httpd[0].disabled='0'
+	uci -q commit rtp2httpd
+	/etc/init.d/rtp2httpd start
+	logger -t iptv_manager -p daemon.info "启动 rtp2HTTPd"
+}
+
+_stop_rtp2httpd() {
+	[ -f /etc/init.d/rtp2httpd ] && /etc/init.d/rtp2httpd stop
+	uci -q set rtp2httpd.@rtp2httpd[0].disabled='1'
+	uci -q commit rtp2httpd
+	logger -t iptv_manager -p daemon.info "停止 rtp2HTTPd"
+}
+
+# ── procd 回调 ────────────────────────────────────────────────
+
+start_service() {
+	config_load "$CONFIG_NAME"
+	_load_global
+
+	[ "$ENABLED" = "1" ] || {
+		logger -t iptv_manager "未启用，跳过"
+		return 0
+	}
+
+	case "$PROGRAM" in
+		msd)       _start_msd       ;;
+		rtp2httpd) _start_rtp2httpd ;;
+		*)
+			logger -t iptv_manager -p daemon.err "未知程序：$PROGRAM"
+			;;
+	esac
+}
+
+stop_service() {
+	# 每次停止时两个都停，避免切换程序时旧程序残留后台
+	_stop_msd
+	_stop_rtp2httpd
+	logger -t iptv_manager "IPTV Manager 停止"
+}
+
+service_triggers() {
+	procd_add_reload_trigger "$CONFIG_NAME"
+	procd_add_reload_trigger "rtp2httpd"
+	# 不监听 msd_lite，避免 start_service 写 enable=1 时触发重启循环
+}
+
+reload_service() {
+	stop
+	start
+}
