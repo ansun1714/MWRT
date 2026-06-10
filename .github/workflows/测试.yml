@@ -258,19 +258,23 @@ jobs:
         with:
           name: DONGZAI_${{ github.event.inputs.device }}K${{ steps.kernel.outputs.kernel }}${{ github.run_number }}
           path: upload/
-          retention-days: 7
+          retention-days: 30
 
       - name: 🏷️ 生成 Release 标签
         id: tag
         run: |
-          DEVICE="${{ github.event.inputs.device }}"
-          DATE=$(date +'%Y-%m-%d')
-          TIME=$(date +'%H%M')
-          TAG="DONGZAI-${DEVICE^^}-$(date +'%Y.%m.%d')-${TIME}"
-
-          echo "release_tag=$TAG"   >> "$GITHUB_OUTPUT"
-          echo "release_date=$DATE" >> "$GITHUB_OUTPUT"
-          echo "生成 Tag：$TAG"
+         DEVICE="${{ github.event.inputs.device }}"
+         DATE=$(date +'%Y-%m-%d')
+         TIME=$(date +'%H%M')
+  
+         KERNEL="${{ steps.kernel.outputs.kernel }}"
+  
+         TAG="DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
+  
+         echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+         echo "release_date=$DATE" >> "$GITHUB_OUTPUT"
+  
+         echo "生成 Tag：$TAG"
 
       - name: 🚀 发布到 Release
         uses: softprops/action-gh-release@v2
