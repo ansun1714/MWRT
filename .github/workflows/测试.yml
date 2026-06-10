@@ -118,8 +118,6 @@ jobs:
           esac
 
           # ── 设备 TARGET 修正 ─────────────────────────────────
-          # WH3000 / WH3000 Pro：config 文件已有正确设备行，直接使用
-          # RE-SP-01B：config 由其他设备 config 修改而来，需强制修正
           if [ "$DEVICE" = "re-sp-01b" ]; then
             grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config \
               > /tmp/.config_patched
@@ -140,12 +138,10 @@ jobs:
 
           case "$DEVICE" in
             wh3000|wh3000pro)
-              # ARM Filogic（MT7981）：启用测试内核
               printf 'CONFIG_TESTING_KERNEL=y\n' >> openwrt/.config
               echo "✅ Filogic ARM：已启用最新测试内核（LEDE 自动选择）"
               ;;
             re-sp-01b)
-              # MT7621 MIPS：仅支持 5.x 稳定内核
               sed -i '/CONFIG_TESTING_KERNEL/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_6/d'      openwrt/.config
               printf '# CONFIG_TESTING_KERNEL is not set\n' >> openwrt/.config
@@ -169,28 +165,6 @@ jobs:
           echo "── 内核版本 ──"
           grep -E "LINUX_6|LINUX_5|TESTING_KERNEL" .config | head -5 || true
 
-      - name: 🔍 获取实际内核版本
-        id: kernel
-        run: |
-          cd openwrt
-
-          # 从 .config 提取内核版本号
-          KERNEL=$(grep "^CONFIG_LINUX_[0-9_]*=y" .config | head -1 | sed 's/CONFIG_LINUX_//' | sed 's/=y//' | tr '_' '.')
-          [ -z "$KERNEL" ] && KERNEL="Unknown"
-
-          COMMIT=$(git rev-parse --short HEAD)
-          BUILD_TIME=$(date '+%Y-%m-%d %H:%M UTC')
-
-          echo "kernel=$KERNEL" >> $GITHUB_OUTPUT
-          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
-          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Kernel : $KERNEL"
-          echo "Commit : $COMMIT"
-          echo "Time   : $BUILD_TIME"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━"
-
       - name: ⬇️ 下载编译依赖
         run: |
           cd openwrt
@@ -202,7 +176,6 @@ jobs:
           cd openwrt
           echo "── 开始编译，CPU 核心：$(nproc) ──"
 
-          # 并行编译，记录日志并过滤关键信息
           make -j$(nproc) V=s 2>&1 | tee /tmp/build.log | grep -E "^make\[[0-9]+\]|ERROR:|error:" || true
 
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
@@ -213,6 +186,25 @@ jobs:
 
           echo "✅ 编译完成"
 
+      # ─────────────────────────────────────────────────────────
+      # 获取完整内核版本（必须放在编译之后，此时内核源码已准备好）
+      - name: 🔍 获取完整内核版本
+        id: kernel
+        run: |
+          cd openwrt
+          # 使用 make kernelversion 获取完整版本号，例如 6.6.139 或 5.10.226
+          KERNEL=$(make kernelversion 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "Unknown")
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date '+%Y-%m-%d %H:%M UTC')
+          echo "kernel=$KERNEL" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "完整内核版本 : $KERNEL"
+          echo "LEDE Commit  : $COMMIT"
+          echo "编译时间     : $BUILD_TIME"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━"
+
       - name: 📁 整理固件
         id: organize
         run: |
@@ -222,7 +214,6 @@ jobs:
 
           cd upload
 
-          # 统一重命名：openwrt/lede → DONGZAI
           for f in *; do
             newname=$(echo "$f" | sed 's/openwrt/DONGZAI/g; s/lede/DONGZAI/g')
             [ "$f" != "$newname" ] && mv "$f" "$newname"
