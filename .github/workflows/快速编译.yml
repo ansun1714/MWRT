@@ -98,12 +98,11 @@ jobs:
             ninja-build jq rename libelf-dev \
             device-tree-compiler
 
-      # ======================= 完全重新编译时，清理缓存 =======================
+      # ======================= 完全重新编译模式时，清理所有缓存 =======================
       - name: 🧹 完全重新编译模式 - 清理所有缓存
         if: github.event.inputs.build_mode == 'clean'
         run: |
           echo "⚠️ 完全重新编译模式：将清理所有缓存目录"
-          # 清理可能存在的旧编译目录
           sudo rm -rf openwrt/build_dir openwrt/staging_dir openwrt/tmp openwrt/dl openwrt/feeds
           sudo rm -rf ~/.ccache
           echo "✅ 缓存已清理，将进行全新编译"
@@ -111,14 +110,12 @@ jobs:
       - name: 💾 缓存 key 准备（生成 hash）
         id: cache_hash
         run: |
-          # 生成设备配置文件的 hash（.config 文件）
           CONFIG_HASH=$(sha256sum "${{ github.event.inputs.device }}.config" | cut -d' ' -f1)
-          # 生成自定义脚本的 hash（diy-part1.sh, diy-part2.sh, 以及 files/ 目录）
           DIY_HASH=$(find . -maxdepth 2 -type f \( -name "diy-part*.sh" -o -name "files" -type d \) -exec sha256sum {} \; 2>/dev/null | sort -k2 | sha256sum | cut -d' ' -f1)
           echo "config_hash=$CONFIG_HASH" >> $GITHUB_OUTPUT
           echo "diy_hash=$DIY_HASH" >> $GITHUB_OUTPUT
 
-      # 快速模式才恢复 ccache 缓存，完全重编译模式下跳过恢复（因为上面已清理）
+      # 快速模式才恢复 ccache 缓存
       - name: ♻️ 恢复 ccache 缓存
         if: github.event.inputs.build_mode == 'fast'
         id: ccache_cache
@@ -163,8 +160,7 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
       
-      # 完全重编译模式下，每次都重新更新 feeds
-      - name: 🔄 更新 & 安装 Feeds（完全重编译模式）
+      - name: 🔄 更新 & 安装 Feeds（完全重新编译模式）
         if: github.event.inputs.build_mode == 'clean'
         run: |
           cd openwrt
@@ -268,12 +264,10 @@ jobs:
           export PATH="/usr/lib/ccache:$PATH"
           export CCACHE_DIR=~/.ccache
           
-          # 显示 ccache 统计（仅在快速模式，清理模式下 ccache 可能为空）
           if [ "${{ github.event.inputs.build_mode }}" = "fast" ]; then
             ccache -s
           fi
 
-          # 完全重编译模式：先执行 make clean
           if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
             echo "🧹 完全重编译模式：执行 make clean..."
             make clean
@@ -293,23 +287,20 @@ jobs:
             ccache -s
           fi
 
-      # ======================= 保存缓存（仅在快速模式下） =======================
+      # ======================= 保存缓存（无论哪种模式，编译后都保存） =======================
       - name: 💾 保存 ccache 缓存
-        if: github.event.inputs.build_mode == 'fast'
         uses: actions/cache@v4
         with:
           path: ~/.ccache
           key: ccache-${{ runner.os }}-${{ steps.cache_hash.outputs.config_hash }}-${{ steps.cache_hash.outputs.diy_hash }}
 
       - name: 💾 保存 dl 缓存
-        if: github.event.inputs.build_mode == 'fast'
         uses: actions/cache@v4
         with:
           path: openwrt/dl
           key: dl-${{ runner.os }}-${{ env.LEDE_COMMIT }}
 
       - name: 💾 保存编译目录缓存
-        if: github.event.inputs.build_mode == 'fast'
         uses: actions/cache@v4
         with:
           path: |
