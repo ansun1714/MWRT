@@ -32,20 +32,173 @@ jobs:
       contents: write
 
     steps:
-      # ... 前面的步骤保持不变（环境初始化、克隆、配置等） ...
-
-      # ---------- 编译前设置 ccache 容量 ----------
-      - name: ⚙️ 配置 ccache（增大缓存容量）
+      - name: 🎯 DONGZAI 固件工厂
         run: |
-          sudo apt-get install -y ccache
-          ccache -M 5G           # 设置最大 5GB
-          ccache -z              # 零统计
-          echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
+          cat << 'EOF'
+            ____   ___  _   _  ____ _____    _    ___
+           |  _ \ / _ \| \ | |/ ___|__  /  / \  |_ _|
+           | | | | | | |  \| | |  _ / /  / _ \  | |
+           | |_| | |_| | |\  | |_| |/ /__/ ___ \ | |
+           |____/ \___/|_| \_|\____/____/_/   \_\___|
+                  🏗️  固件工厂  ·  OpenWrt / LEDE
+          EOF
+          DEVICE="${{ github.event.inputs.device }}"
+          BUILD_MODE="${{ github.event.inputs.build_mode }}"
+          case "$DEVICE" in
+            wh3000)     DNAME="华硅 WH3000" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
+            wh3000pro)  DNAME="华硅 WH3000 Pro" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
+            re-sp-01b)  DNAME="京东云无线宝 RE-SP-01B" ; DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC" ;;
+          esac
+          echo "  ┌─────────────────────────────────────────┐"
+          echo "  │  📦 设备：$DNAME"
+          echo "  │  🔧 规格：$DSPEC"
+          echo "  │  ⚡ 模式：$BUILD_MODE"
+          echo "  │  🕐 时间：$(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "  │  🔖 标识：DONGZAI"
+          echo "  └─────────────────────────────────────────┘"
 
-      # ---------- 恢复缓存（仅 fast 模式）----------
+      - name: 📥 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 🧹 释放磁盘空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          df -h
+
+      - name: ⚙️ 初始化编译环境
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
+            zlib1g-dev file wget curl ccache cmake ninja-build jq rename libelf-dev \
+            device-tree-compiler
+
+      - name: 💾 生成缓存哈希
+        id: cache_hash
+        run: |
+          CONFIG_HASH=$(sha256sum "${{ github.event.inputs.device }}.config" | cut -d' ' -f1)
+          DIY_HASH=$(find . -maxdepth 2 -type f \( -name "diy-part*.sh" -o -name "files" -type d \) -exec sha256sum {} \; 2>/dev/null | sort -k2 | sha256sum | cut -d' ' -f1)
+          echo "config_hash=$CONFIG_HASH" >> $GITHUB_OUTPUT
+          echo "diy_hash=$DIY_HASH" >> $GITHUB_OUTPUT
+
+      - name: 🧹 Clean 模式 - 清理所有缓存
+        if: github.event.inputs.build_mode == 'clean'
+        run: |
+          echo "⚠️ 完全重新编译模式：清理所有缓存"
+          sudo rm -rf openwrt ~/.ccache
+          echo "✅ 缓存已清理"
+
+      # 关键：每次都重新克隆源码（不缓存源码目录，避免 diy-part1.sh 冲突）
+      - name: 📦 克隆 LEDE 源码
+        run: |
+          rm -rf openwrt   # 确保删除旧目录
+          git clone --depth=1 -b $LEDE_BRANCH $LEDE_REPO openwrt
+          echo "── LEDE 最新提交 ──"
+          git -C openwrt log --oneline -3
+
+      - name: 🔧 DIY Part 1 - 配置 Feeds
+        run: |
+          chmod +x diy-part1.sh
+          cd openwrt
+          ../diy-part1.sh
+
+      # 恢复 feeds 缓存（仅 fast 模式）
+      - name: ♻️ 恢复 feeds 缓存
+        if: github.event.inputs.build_mode == 'fast'
+        id: feeds_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/feeds
+            openwrt/package/feeds
+          key: feeds-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}
+          restore-keys: |
+            feeds-${{ runner.os }}-${{ github.event.inputs.device }}-
+
+      - name: 🔄 更新 & 安装 Feeds
+        if: (github.event.inputs.build_mode == 'fast' && steps.feeds_cache.outputs.cache-hit != 'true') || github.event.inputs.build_mode == 'clean'
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 🎛️ 加载设备配置
+        run: |
+          DEVICE="${{ github.event.inputs.device }}"
+          case "$DEVICE" in
+            wh3000)    cp wh3000.config    openwrt/.config ;;
+            wh3000pro) cp wh3000pro.config openwrt/.config ;;
+            re-sp-01b) cp re-sp-01b.config openwrt/.config ;;
+          esac
+          if [ "$DEVICE" = "re-sp-01b" ]; then
+            grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config > /tmp/.config_patched
+            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" >> /tmp/.config_patched
+            cp /tmp/.config_patched openwrt/.config
+          fi
+          grep "DEVICE_" openwrt/.config | grep -v "^#" || true
+
+      - name: 🐧 配置内核版本
+        run: |
+          DEVICE="${{ github.event.inputs.device }}"
+          case "$DEVICE" in
+            wh3000|wh3000pro)
+              printf 'CONFIG_TESTING_KERNEL=y\n' >> openwrt/.config
+              ;;
+            re-sp-01b)
+              sed -i '/CONFIG_TESTING_KERNEL/d' openwrt/.config
+              sed -i '/CONFIG_LINUX_6_6/d' openwrt/.config
+              printf '# CONFIG_TESTING_KERNEL is not set\n' >> openwrt/.config
+              ;;
+          esac
+
+      - name: 🔧 DIY Part 2 - 文件定制
+        run: |
+          chmod +x diy-part2.sh
+          cd openwrt
+          export DEVICE="${{ github.event.inputs.device }}"
+          ../diy-part2.sh
+
+      - name: 📋 生成最终配置
+        run: |
+          cd openwrt
+          make defconfig
+          echo "── TARGET 配置 ──"
+          grep "CONFIG_TARGET_" .config | head -10
+          echo "── 内核版本 ──"
+          grep -E "LINUX_6|LINUX_5|TESTING_KERNEL" .config | head -5 || true
+
+      # ---------- 恢复其余缓存（dl, build_dir, ccache）----------
+      - name: ♻️ 恢复 dl 缓存
+        if: github.event.inputs.build_mode == 'fast'
+        id: dl_cache
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: dl-${{ runner.os }}-${{ github.event.inputs.device }}
+          restore-keys: dl-${{ runner.os }}-
+
+      - name: ♻️ 恢复编译目录缓存
+        if: github.event.inputs.build_mode == 'fast'
+        id: build_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/build_dir
+            openwrt/staging_dir
+            openwrt/tmp
+          key: build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-${{ steps.cache_hash.outputs.diy_hash }}
+          restore-keys: |
+            build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-
+            build-${{ runner.os }}-${{ github.event.inputs.device }}-
+
       - name: ♻️ 恢复 ccache 缓存
         if: github.event.inputs.build_mode == 'fast'
+        id: ccache_cache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
@@ -53,20 +206,32 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ github.event.inputs.device }}-
 
-      # ... 其他缓存恢复（dl、build_dir） ...
+      - name: ⚙️ 配置 ccache 容量
+        run: |
+          ccache -M 5G
+          ccache -z
+          echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
 
-      # ---------- 编译固件 ----------
+      - name: ⬇️ 下载编译依赖
+        run: |
+          cd openwrt
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \; 2>/dev/null || true
+
       - name: 🔨 编译固件
         run: |
           cd openwrt
           export PATH="/usr/lib/ccache:$PATH"
           export CCACHE_DIR=~/.ccache
-          ccache -s   # 显示命中率
+          ccache -s
           if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
+            echo "🧹 Clean 模式：执行 make clean"
             make clean
           fi
           make -j$(nproc) V=s 2>&1 | tee /tmp/build.log | grep -E "^make\[[0-9]+\]|ERROR:|error:" || true
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "⚠️ 并行编译失败，单线程重试..."
             make -j1 V=s 2>&1 | tail -150
             exit 1
           fi
