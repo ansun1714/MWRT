@@ -1,0 +1,6 @@
+# 单播 IPTV 代理配置
+#
+# 每条 rule 对应一条 socat TCP 转发：
+#   本机 listen_port  --->  upstream_host:upstream_port
+#
+# 通过 LuCI「服务 -> 单播IPTV代理」添加，无需手动编辑本文件
