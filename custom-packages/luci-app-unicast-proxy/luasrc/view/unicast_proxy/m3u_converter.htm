@@ -1,0 +1,125 @@
+<%
+local sys = require "luci.sys"
+local lan_ip = sys.exec("uci -q get network.lan.ipaddr"):gsub("%s+", "")
+if lan_ip == "" then lan_ip = "192.168.1.1" end
+%>
+<%+header%>
+
+<div class="cbi-map">
+	<h2 name="content"><%:M3U 地址转换工具%></h2>
+	<div class="cbi-map-descr">
+		<%:将 M3U 播放列表中指向运营商内网的源地址，
+		批量替换为路由器的代理地址，转换后的列表可在任意网络下使用。
+		使用前请先在“代理规则”中添加并启用对应规则。%>
+	</div>
+
+	<div class="cbi-section">
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:原始源地址（host:port）%></label>
+			<div class="cbi-value-field">
+				<input type="text" id="src_addr"
+					placeholder="112.86.202.37:8112"
+					style="width:300px" />
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:替换为（路由器地址:端口）%></label>
+			<div class="cbi-value-field">
+				<input type="text" id="dst_addr"
+					value="<%=pcdata(lan_ip)%>:8112"
+					style="width:300px" />
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:选择本地 M3U 文件%></label>
+			<div class="cbi-value-field">
+				<input type="file" id="m3u_file" accept=".m3u,.m3u8,text/plain" />
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:或直接粘贴 M3U 内容%></label>
+			<div class="cbi-value-field">
+				<textarea id="m3u_in" rows="10" style="width:100%"></textarea>
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<div class="cbi-value-field">
+				<button class="cbi-button cbi-button-action" id="btn_convert">
+					<%:转换%>
+				</button>
+				<button class="cbi-button" id="btn_download" disabled>
+					<%:下载转换后的 M3U%>
+				</button>
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:转换结果%></label>
+			<div class="cbi-value-field">
+				<textarea id="m3u_out" rows="10" style="width:100%" readonly></textarea>
+			</div>
+		</div>
+
+	</div>
+</div>
+
+<script type="text/javascript">
+(function() {
+	var fileInput = document.getElementById('m3u_file');
+	var textIn    = document.getElementById('m3u_in');
+	var textOut   = document.getElementById('m3u_out');
+	var btnConv   = document.getElementById('btn_convert');
+	var btnDl     = document.getElementById('btn_download');
+	var outBlobUrl = null;
+
+	fileInput.addEventListener('change', function(e) {
+		var f = e.target.files[0];
+		if (!f) return;
+		var reader = new FileReader();
+		reader.onload = function(ev) {
+			textIn.value = ev.target.result;
+		};
+		reader.readAsText(f, 'utf-8');
+	});
+
+	btnConv.addEventListener('click', function() {
+		var src = document.getElementById('src_addr').value.trim();
+		var dst = document.getElementById('dst_addr').value.trim();
+		var content = textIn.value;
+
+		if (!src || !dst) {
+			alert('<%:请填写原始源地址和替换地址%>');
+			return;
+		}
+		if (!content) {
+			alert('<%:请粘贴 M3U 内容或选择文件%>');
+			return;
+		}
+
+		var result = content.split(src).join(dst);
+		textOut.value = result;
+
+		if (outBlobUrl) URL.revokeObjectURL(outBlobUrl);
+		var blob = new Blob([result], {type: 'text/plain;charset=utf-8'});
+		outBlobUrl = URL.createObjectURL(blob);
+		btnDl.disabled = false;
+	});
+
+	btnDl.addEventListener('click', function() {
+		if (!outBlobUrl) return;
+		var a = document.createElement('a');
+		a.href = outBlobUrl;
+		a.download = 'iptv_proxy.m3u';
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+	});
+})();
+</script>
+
+<%+footer%>
