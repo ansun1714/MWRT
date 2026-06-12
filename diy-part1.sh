@@ -27,7 +27,9 @@ git clone --depth=1 \
 
 cp -r "${GITHUB_WORKSPACE}/custom-packages/luci-app-iptv-manager" \
       package/luci-app-iptv-manager
-
+# 复制单播IPTV代理插件
+cp -r "${GITHUB_WORKSPACE}/custom-packages/luci-app-unicast-proxy" \
+    package/luci-app-unicast-proxy
 # ─── 完成 ────────────────────────────────────────────────
 
 echo "✅ 软件源配置完成"
