@@ -12,4 +12,11 @@ function index()
         60
     )
     page.dependent = true
+
+    entry(
+        {"admin", "services", "iptv_manager", "m3u"},
+        template("iptv_manager/m3u_converter"),
+        _("M3U地址转换"),
+        61
+    ).dependent = true
 end
