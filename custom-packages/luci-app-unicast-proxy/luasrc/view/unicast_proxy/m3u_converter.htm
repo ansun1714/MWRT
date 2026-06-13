@@ -1,35 +1,77 @@
 <%
-local sys = require "luci.sys"
+local uci   = require "luci.model.uci".cursor()
+local sys   = require "luci.sys"
+local jsonc = require "luci.jsonc"
+
 local lan_ip = sys.exec("uci -q get network.lan.ipaddr"):gsub("%s+", "")
 if lan_ip == "" then lan_ip = "192.168.1.1" end
+
+local ddns_host = uci:get("unicast_proxy", "settings", "ddns_host") or ""
+
+local rules = {}
+uci:foreach("unicast_proxy", "rule", function(s)
+	if s.enable == "1" and s.upstream_host and s.upstream_port and s.listen_port then
+		rules[#rules+1] = {
+			name        = s.name or s[".name"],
+			upstream    = s.upstream_host .. ":" .. s.upstream_port,
+			listen_port = s.listen_port,
+			wan_access  = (s.wan_access == "1")
+		}
+	end
+end)
+
+local pagedata = jsonc.stringify({
+	rules     = rules,
+	lan_ip    = lan_ip,
+	ddns_host = ddns_host
+})
 %>
 <%+header%>
 
 <div class="cbi-map">
 	<h2 name="content"><%:M3U 地址转换工具%></h2>
 	<div class="cbi-map-descr">
-		<%:将 M3U 播放列表中指向运营商内网的源地址，
-		批量替换为路由器的代理地址，转换后的列表可在任意网络下使用。
-		使用前请先在“代理规则”中添加并启用对应规则。%>
+		<%:局域网内（与代理同一宽带）通常无需转换，直接使用原始 M3U 即可。
+		此工具主要用于生成可在外网访问的播放列表（基于 DDNS 域名）。
+		请先在「代理规则」中添加规则并填写 DDNS 域名。%>
 	</div>
 
 	<div class="cbi-section">
 
 		<div class="cbi-value">
-			<label class="cbi-value-title"><%:原始源地址（host:port）%></label>
+			<label class="cbi-value-title"><%:选择代理规则%></label>
 			<div class="cbi-value-field">
-				<input type="text" id="src_addr"
-					placeholder="112.86.202.37:8112"
-					style="width:300px" />
+				<select id="rule_select" style="width:300px"></select>
 			</div>
 		</div>
 
 		<div class="cbi-value">
-			<label class="cbi-value-title"><%:替换为（路由器地址:端口）%></label>
+			<label class="cbi-value-title"><%:访问方式%></label>
 			<div class="cbi-value-field">
-				<input type="text" id="dst_addr"
-					value="<%=pcdata(lan_ip)%>:8112"
-					style="width:300px" />
+				<select id="access_mode" style="width:300px">
+					<option value="wan"><%:外网（DDNS域名）%></option>
+					<option value="lan"><%:局域网（路由器IP）%></option>
+				</select>
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:原始源地址（host:port）%></label>
+			<div class="cbi-value-field">
+				<input type="text" id="src_addr" style="width:300px" />
+				<div class="cbi-value-description">
+					<%:自动从所选规则填入，可手动修改%>
+				</div>
+			</div>
+		</div>
+
+		<div class="cbi-value">
+			<label class="cbi-value-title"><%:替换为（host:port）%></label>
+			<div class="cbi-value-field">
+				<input type="text" id="dst_addr" style="width:300px" />
+				<div class="cbi-value-description">
+					<%:根据访问方式和DDNS域名自动生成，可手动修改%>
+				</div>
 			</div>
 		</div>
 
@@ -43,7 +85,7 @@ if lan_ip == "" then lan_ip = "192.168.1.1" end
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:或直接粘贴 M3U 内容%></label>
 			<div class="cbi-value-field">
-				<textarea id="m3u_in" rows="10" style="width:100%"></textarea>
+				<textarea id="m3u_in" rows="8" style="width:100%"></textarea>
 			</div>
 		</div>
 
@@ -61,7 +103,7 @@ if lan_ip == "" then lan_ip = "192.168.1.1" end
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:转换结果%></label>
 			<div class="cbi-value-field">
-				<textarea id="m3u_out" rows="10" style="width:100%" readonly></textarea>
+				<textarea id="m3u_out" rows="8" style="width:100%" readonly></textarea>
 			</div>
 		</div>
 
@@ -70,26 +112,55 @@ if lan_ip == "" then lan_ip = "192.168.1.1" end
 
 <script type="text/javascript">
 (function() {
-	var fileInput = document.getElementById('m3u_file');
-	var textIn    = document.getElementById('m3u_in');
-	var textOut   = document.getElementById('m3u_out');
-	var btnConv   = document.getElementById('btn_convert');
-	var btnDl     = document.getElementById('btn_download');
+	var DATA = <%=pagedata%>;
+
+	var ruleSel  = document.getElementById('rule_select');
+	var modeSel  = document.getElementById('access_mode');
+	var srcInput = document.getElementById('src_addr');
+	var dstInput = document.getElementById('dst_addr');
+	var fileInput= document.getElementById('m3u_file');
+	var textIn   = document.getElementById('m3u_in');
+	var textOut  = document.getElementById('m3u_out');
+	var btnConv  = document.getElementById('btn_convert');
+	var btnDl    = document.getElementById('btn_download');
 	var outBlobUrl = null;
+
+	DATA.rules.forEach(function(r, i) {
+		var opt = document.createElement('option');
+		opt.value = i;
+		opt.textContent = r.name + '  (' + r.upstream + ' \u2192 :' + r.listen_port + ')';
+		ruleSel.appendChild(opt);
+	});
+
+	function applyRule() {
+		var r = DATA.rules[ruleSel.value];
+		if (!r) return;
+		srcInput.value = r.upstream;
+
+		var host;
+		if (modeSel.value === 'wan') {
+			host = DATA.ddns_host || '(<%:未填写DDNS域名%>)';
+		} else {
+			host = DATA.lan_ip;
+		}
+		dstInput.value = host + ':' + r.listen_port;
+	}
+
+	ruleSel.addEventListener('change', applyRule);
+	modeSel.addEventListener('change', applyRule);
+	if (DATA.rules.length > 0) applyRule();
 
 	fileInput.addEventListener('change', function(e) {
 		var f = e.target.files[0];
 		if (!f) return;
 		var reader = new FileReader();
-		reader.onload = function(ev) {
-			textIn.value = ev.target.result;
-		};
+		reader.onload = function(ev) { textIn.value = ev.target.result; };
 		reader.readAsText(f, 'utf-8');
 	});
 
 	btnConv.addEventListener('click', function() {
-		var src = document.getElementById('src_addr').value.trim();
-		var dst = document.getElementById('dst_addr').value.trim();
+		var src = srcInput.value.trim();
+		var dst = dstInput.value.trim();
 		var content = textIn.value;
 
 		if (!src || !dst) {
@@ -98,6 +169,10 @@ if lan_ip == "" then lan_ip = "192.168.1.1" end
 		}
 		if (!content) {
 			alert('<%:请粘贴 M3U 内容或选择文件%>');
+			return;
+		}
+		if (dst.indexOf('(') === 0) {
+			alert('<%:DDNS域名未填写，请先在上方全局设置中填写%>');
 			return;
 		}
 
