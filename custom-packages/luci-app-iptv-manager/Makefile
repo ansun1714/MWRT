@@ -13,13 +13,14 @@ define Package/luci-app-iptv-manager
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI - IPTV 管理器 (msd_lite / rtp2HTTPd)
-  DEPENDS:=+luci-base
+  DEPENDS:=+luci-base +socat
   PKGARCH:=all
 endef
 
 define Package/luci-app-iptv-manager/description
   IPTV 代理服务管理界面，支持在 msd_lite 和 rtp2HTTPd 之间切换，
   每个程序独立配置参数，统一由 init 脚本控制启停。
+  另含单播IPTV代理（socat转发 + DDNS外网访问 + M3U地址转换）。
 endef
 
 define Build/Prepare
@@ -46,6 +47,8 @@ define Package/luci-app-iptv-manager/install
 	    $(1)/usr/lib/lua/luci/view/iptv_manager/toggle_js.htm
 	$(INSTALL_DATA) ./luasrc/view/iptv_manager/status.htm \
 	    $(1)/usr/lib/lua/luci/view/iptv_manager/status.htm
+	$(INSTALL_DATA) ./luasrc/view/iptv_manager/m3u_converter.htm \
+	    $(1)/usr/lib/lua/luci/view/iptv_manager/m3u_converter.htm
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/iptv_manager \
