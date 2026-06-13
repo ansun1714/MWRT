@@ -1,0 +1,33 @@
+name: 🧪 测试编译单播代理插件
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ipk:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备插件源码
+        run: cp -r custom-packages/luci-app-unicast-proxy .
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@v7
+        env:
+          ARCH: aarch64_cortex-a53-23.05.5
+          PACKAGES: luci-app-unicast-proxy
+          FEEDNAME: unicast_proxy_test
+          NO_DEFAULT_FEEDS: 0
+          V: s
+
+      - name: 收集 ipk
+        run: |
+          mkdir -p out
+          find . -name "luci-app-unicast-proxy*.ipk" -exec cp {} out/ \;
+          ls -lh out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unicast-proxy-ipk
+          path: out/
