@@ -61,3 +61,29 @@ end
 
 </div>
       </fieldset>
+<!-- 把这段追加到你现有的 status.htm 末尾 -->
+<script type="text/javascript">
+(function() {
+	/* CBI 页面通过 ucodebridge 渲染，不触发 LuCI SPA 的侧边栏自动关闭。
+	   在页面加载后手动触发关闭，解决移动端侧边栏覆盖内容的问题。 */
+	function closeSidebar() {
+		/* 新 ucode LuCI：点击 overlay 触发关闭 */
+		var overlay = document.querySelector('.cover');
+		if (overlay && getComputedStyle(overlay).display !== 'none') {
+			overlay.click();
+			return;
+		}
+		/* 备用：直接操作 checkbox toggle */
+		var toggle = document.getElementById('main-menu-state');
+		if (toggle && toggle.checked) {
+			toggle.checked = false;
+			toggle.dispatchEvent(new Event('change'));
+		}
+	}
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', closeSidebar);
+	} else {
+		closeSidebar();
+	}
+})();
+</script>
