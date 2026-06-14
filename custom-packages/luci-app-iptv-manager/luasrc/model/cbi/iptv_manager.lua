@@ -26,7 +26,6 @@ m:section(SimpleSection).template = "iptv_manager/toggle_js"
 
 
 -- ══ Map 2：msd_lite 配置 (/etc/config/msd_lite) ══════════════
--- section 名 = "config"，类型 = "msd_lite"，启用选项 = "enable"
 m_msd = Map("msd_lite",
     translate("msd_lite 配置"),
     translate("以下参数写入 /etc/config/msd_lite，选择「msd_lite」时生效。"))
@@ -262,14 +261,15 @@ m_proxy = Map("iptv_manager",
         "配合 DDNS 域名可在外网访问。"))
 
 -- 全局设置
-s = m_proxy:section(NamedSection, "unicast_settings", "unicast_proxy", translate("全局设置"))
+s = m_proxy:section(NamedSection, "unicast_settings", "unicast_proxy",
+    translate("全局设置"))
 s.addremove = false
 s.anonymous = true
 
 o = s:option(Value, "ddns_host", translate("DDNS 域名"))
-o.placeholder = "myhome.ddns.net"
-o.rmempty = true
-o.description = translate(
+o.placeholder  = "myhome.ddns.net"
+o.rmempty      = true
+o.description  = translate(
     "填写用于远程访问的 DDNS 域名（不含端口和 http://）。" ..
     "DDNS 解析需在「系统 -> 动态DNS」中单独配置好，" ..
     "这里只是用来生成外网播放列表地址。")
@@ -290,50 +290,60 @@ o.placeholder = "江苏联通单播"
 
 o = s:option(Value, "upstream_host", translate("源地址IP"))
 o.placeholder = "112.86.202.37"
-o.datatype = "ipaddr"
-o.rmempty = false
+o.datatype    = "ipaddr"
+o.rmempty     = false
 
 o = s:option(Value, "upstream_port", translate("源端口"))
 o.placeholder = "8112"
-o.datatype = "port"
-o.rmempty = false
+o.datatype    = "port"
+o.rmempty     = false
 
 o = s:option(Value, "listen_port", translate("本机监听端口"))
 o.placeholder = "8112"
-o.datatype = "port"
-o.rmempty = false
+o.datatype    = "port"
+o.rmempty     = false
 
 o = s:option(Flag, "wan_access", translate("公网访问"))
-o.rmempty = false
-o.default = "0"
+o.rmempty    = false
+o.default    = "0"
 o.description = translate(
     "开启后自动在防火墙 WAN 区域放行该端口，" ..
     "配合上方 DDNS 域名即可在外网访问。" ..
     "需要运营商分配公网IP（非NAT），否则无法生效。")
 
--- 访问地址一览
+-- ── 访问地址一览 ─────────────────────────────────────────────
 local info = m_proxy:section(SimpleSection, translate("访问地址一览"))
+
+-- pcdata 在 CBI 模型上下文中不可用，定义本地 HTML 转义函数
+local function esc(s)
+    s = tostring(s or "")
+    s = s:gsub("&", "&amp;")
+    s = s:gsub("<", "&lt;")
+    s = s:gsub(">", "&gt;")
+    return s
+end
 
 local sys = require "luci.sys"
 local lan_ip = sys.exec("uci -q get network.lan.ipaddr"):gsub("%s+", "")
 if lan_ip == "" then lan_ip = "192.168.1.1" end
 
-local ddns_host = m_proxy.uci:get("iptv_manager", "unicast_settings", "ddns_host") or ""
+local ddns_host = m_proxy.uci:get(
+    "iptv_manager", "unicast_settings", "ddns_host") or ""
 local lines = {}
 
 m_proxy.uci:foreach("iptv_manager", "unicast_rule", function(sec)
     if sec.enable ~= "1" then return end
     local rname = sec.name or sec[".name"]
-    local lport  = sec.listen_port or "?"
+    local lport = sec.listen_port or "?"
 
-    lines[#lines+1] = "<b>" .. pcdata(rname) .. "</b>"
+    lines[#lines+1] = "<b>" .. esc(rname) .. "</b>"
     lines[#lines+1] = translate("局域网") .. ": http://" ..
-        lan_ip .. ":" .. lport .. "/原始路径"
+        esc(lan_ip) .. ":" .. lport .. "/原始路径"
 
     if sec.wan_access == "1" then
         if ddns_host ~= "" then
             lines[#lines+1] = translate("外网") .. ": http://" ..
-                pcdata(ddns_host) .. ":" .. lport .. "/原始路径"
+                esc(ddns_host) .. ":" .. lport .. "/原始路径"
         else
             lines[#lines+1] = "<span style='color:orange'>" ..
                 translate("外网：已开启公网访问，但未填写 DDNS 域名") ..
@@ -349,5 +359,21 @@ if #lines == 0 then
 end
 
 info.description = table.concat(lines, "<br/>")
+
+-- ── M3U 转换工具入口（醒目按钮）────────────────────────────
+local m3u_entry = m_proxy:section(SimpleSection)
+m3u_entry.description =
+    '<div style="margin:16px 0 8px 0;padding:14px 16px;' ..
+    'background:#f0f8ff;border:1px solid #b0d4f0;border-radius:6px">' ..
+    '<span style="font-size:15px;font-weight:bold">📋 ' ..
+    translate("M3U 地址转换工具") .. '</span><br/>' ..
+    '<span style="color:#555;font-size:13px">' ..
+    translate("将运营商原始 M3U 批量替换为本机代理地址，生成可外网访问的播放列表。") ..
+    '</span><br/><br/>' ..
+    '<a class="cbi-button cbi-button-action" ' ..
+    'href="/cgi-bin/luci/admin/services/iptv_manager/m3u" ' ..
+    'style="text-decoration:none;padding:6px 18px;font-size:14px">' ..
+    '▶ ' .. translate("打开 M3U 地址转换工具") ..
+    '</a></div>'
 
 return m, m_msd, m_rtp, m_proxy
