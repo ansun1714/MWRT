@@ -29,52 +29,69 @@ local pagedata = jsonc.stringify({
 <%+header%>
 
 <div class="cbi-map">
-	<h2 name="content"><%:M3U 地址转换工具%></h2>
+
+	<%-- 返回按钮 --%>
+	<div style="margin-bottom:12px">
+		<a class="cbi-button"
+		   href="/cgi-bin/luci/admin/services/iptv_manager"
+		   style="text-decoration:none;padding:5px 14px">
+			◀ <%:返回 IPTV 管理%>
+		</a>
+	</div>
+
+	<h2 name="content">📋 <%:M3U 地址转换工具%></h2>
 	<div class="cbi-map-descr">
 		<%:局域网内（与代理同一宽带）通常无需转换，直接使用原始 M3U 即可。
 		此工具主要用于生成可在外网访问的播放列表（基于 DDNS 域名）。
-		请先在「IPTV 管理 -> 单播IPTV代理」中添加规则并填写 DDNS 域名。%>
+		请先在「IPTV 管理 → 单播IPTV代理」中添加规则并填写 DDNS 域名，再回此处转换。%>
 	</div>
 
 	<div class="cbi-section">
 
+		<%-- 规则选择 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:选择代理规则%></label>
 			<div class="cbi-value-field">
-				<select id="rule_select" style="width:300px"></select>
+				<select id="rule_select" style="width:280px">
+					<option value="">— <%:请先在代理规则中添加规则%> —</option>
+				</select>
 			</div>
 		</div>
 
+		<%-- 访问方式 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:访问方式%></label>
 			<div class="cbi-value-field">
-				<select id="access_mode" style="width:300px">
+				<select id="access_mode" style="width:280px">
 					<option value="wan"><%:外网（DDNS域名）%></option>
 					<option value="lan"><%:局域网（路由器IP）%></option>
 				</select>
 			</div>
 		</div>
 
+		<%-- 原始源地址 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:原始源地址（host:port）%></label>
 			<div class="cbi-value-field">
-				<input type="text" id="src_addr" style="width:300px" />
+				<input type="text" id="src_addr" style="width:280px" />
 				<div class="cbi-value-description">
 					<%:自动从所选规则填入，可手动修改%>
 				</div>
 			</div>
 		</div>
 
+		<%-- 替换为 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:替换为（host:port）%></label>
 			<div class="cbi-value-field">
-				<input type="text" id="dst_addr" style="width:300px" />
+				<input type="text" id="dst_addr" style="width:280px" />
 				<div class="cbi-value-description">
 					<%:根据访问方式和DDNS域名自动生成，可手动修改%>
 				</div>
 			</div>
 		</div>
 
+		<%-- 文件选择 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:选择本地 M3U 文件%></label>
 			<div class="cbi-value-field">
@@ -82,28 +99,48 @@ local pagedata = jsonc.stringify({
 			</div>
 		</div>
 
+		<%-- 粘贴内容 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:或直接粘贴 M3U 内容%></label>
 			<div class="cbi-value-field">
-				<textarea id="m3u_in" rows="8" style="width:100%"></textarea>
+				<textarea id="m3u_in" rows="8"
+				    style="width:100%;font-family:monospace;font-size:12px">
+				</textarea>
 			</div>
 		</div>
 
+		<%-- 操作按钮 --%>
 		<div class="cbi-value">
 			<div class="cbi-value-field">
-				<button class="cbi-button cbi-button-action" id="btn_convert">
-					<%:转换%>
+				<button class="cbi-button cbi-button-action" id="btn_convert"
+				    style="margin-right:8px">
+					⚙ <%:转换%>
 				</button>
 				<button class="cbi-button" id="btn_download" disabled>
-					<%:下载转换后的 M3U%>
+					⬇ <%:下载转换后的 M3U%>
 				</button>
 			</div>
 		</div>
 
+		<%-- 转换结果 --%>
 		<div class="cbi-value">
 			<label class="cbi-value-title"><%:转换结果%></label>
 			<div class="cbi-value-field">
-				<textarea id="m3u_out" rows="8" style="width:100%" readonly></textarea>
+				<textarea id="m3u_out" rows="8" readonly
+				    style="width:100%;font-family:monospace;font-size:12px;
+				           background:#f9f9f9">
+				</textarea>
+			</div>
+		</div>
+
+		<%-- 再次返回按钮 --%>
+		<div class="cbi-value">
+			<div class="cbi-value-field">
+				<a class="cbi-button"
+				   href="/cgi-bin/luci/admin/services/iptv_manager"
+				   style="text-decoration:none;padding:5px 14px">
+					◀ <%:返回 IPTV 管理%>
+				</a>
 			</div>
 		</div>
 
@@ -125,21 +162,28 @@ local pagedata = jsonc.stringify({
 	var btnDl    = document.getElementById('btn_download');
 	var outBlobUrl = null;
 
+	// 填充规则下拉
 	DATA.rules.forEach(function(r, i) {
 		var opt = document.createElement('option');
 		opt.value = i;
-		opt.textContent = r.name + '  (' + r.upstream + ' \u2192 :' + r.listen_port + ')';
+		opt.textContent = r.name +
+			'  (' + r.upstream + ' \u2192 :' + r.listen_port + ')';
 		ruleSel.appendChild(opt);
 	});
 
 	function applyRule() {
-		var r = DATA.rules[ruleSel.value];
+		var idx = ruleSel.value;
+		if (idx === '') return;
+		var r = DATA.rules[parseInt(idx)];
 		if (!r) return;
+
 		srcInput.value = r.upstream;
 
 		var host;
 		if (modeSel.value === 'wan') {
-			host = DATA.ddns_host || '(<%:未填写DDNS域名%>)';
+			host = DATA.ddns_host !== ''
+				? DATA.ddns_host
+				: '<%:（未填写DDNS域名，请先在代理规则全局设置中填写）%>';
 		} else {
 			host = DATA.lan_ip;
 		}
@@ -148,16 +192,25 @@ local pagedata = jsonc.stringify({
 
 	ruleSel.addEventListener('change', applyRule);
 	modeSel.addEventListener('change', applyRule);
-	if (DATA.rules.length > 0) applyRule();
 
+	// 有规则时自动填入第一条
+	if (DATA.rules.length > 0) {
+		ruleSel.value = '0';
+		applyRule();
+	}
+
+	// 读取文件内容
 	fileInput.addEventListener('change', function(e) {
 		var f = e.target.files[0];
 		if (!f) return;
 		var reader = new FileReader();
-		reader.onload = function(ev) { textIn.value = ev.target.result; };
+		reader.onload = function(ev) {
+			textIn.value = ev.target.result;
+		};
 		reader.readAsText(f, 'utf-8');
 	});
 
+	// 执行转换
 	btnConv.addEventListener('click', function() {
 		var src = srcInput.value.trim();
 		var dst = dstInput.value.trim();
@@ -171,8 +224,8 @@ local pagedata = jsonc.stringify({
 			alert('<%:请粘贴 M3U 内容或选择文件%>');
 			return;
 		}
-		if (dst.indexOf('(') === 0) {
-			alert('<%:DDNS域名未填写，请先在全局设置中填写%>');
+		if (dst.indexOf('\uff08') >= 0 || dst.indexOf('(') === 0) {
+			alert('<%:DDNS域名未填写，请先在「单播IPTV代理 → 全局设置」中填写域名%>');
 			return;
 		}
 
@@ -183,8 +236,12 @@ local pagedata = jsonc.stringify({
 		var blob = new Blob([result], {type: 'text/plain;charset=utf-8'});
 		outBlobUrl = URL.createObjectURL(blob);
 		btnDl.disabled = false;
+
+		// 滚动到结果区
+		textOut.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 	});
 
+	// 下载
 	btnDl.addEventListener('click', function() {
 		if (!outBlobUrl) return;
 		var a = document.createElement('a');
