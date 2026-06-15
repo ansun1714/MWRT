@@ -8,221 +8,318 @@ if lan_ip == "" then lan_ip = "192.168.1.1" end
 
 local ddns_host = uci:get("iptv_manager", "unicast_settings", "ddns_host") or ""
 
+local rtp_port = uci:get("rtp2httpd", "@rtp2httpd[0]", "port") or "5140"
+
 local rules = {}
 uci:foreach("iptv_manager", "unicast_rule", function(s)
-	if s.enable == "1" and s.upstream_host and s.upstream_port and s.listen_port then
-		rules[#rules+1] = {
-			name        = s.name or s[".name"],
-			upstream    = s.upstream_host .. ":" .. s.upstream_port,
-			listen_port = s.listen_port,
-			wan_access  = (s.wan_access == "1")
-		}
-	end
+    if s.enable == "1" and s.upstream_host and s.upstream_port and s.listen_port then
+        rules[#rules+1] = {
+            name        = s.name or s[".name"],
+            upstream    = s.upstream_host .. ":" .. s.upstream_port,
+            listen_port = s.listen_port,
+            wan_access  = (s.wan_access == "1")
+        }
+    end
 end)
 
 local pagedata = jsonc.stringify({
-	rules     = rules,
-	lan_ip    = lan_ip,
-	ddns_host = ddns_host
+    rules     = rules,
+    lan_ip    = lan_ip,
+    ddns_host = ddns_host,
+    rtp_port  = rtp_port
 })
 %>
 <%+header%>
 
 <div class="cbi-map">
 
-	<div style="margin-bottom:12px">
-		<a class="cbi-button"
-		   href="/cgi-bin/luci/admin/services/iptv_manager"
-		   style="text-decoration:none;padding:5px 14px">
-			&#9664; <%:返回 IPTV 管理%>
-		</a>
-	</div>
+    <div style="margin-bottom:12px">
+        <a class="cbi-button"
+           href="/cgi-bin/luci/admin/services/iptv_manager"
+           style="text-decoration:none;padding:5px 14px">
+            &#9664; <%:返回 IPTV 管理%>
+        </a>
+    </div>
 
-	<h2 name="content">&#128203; <%:M3U 地址转换工具%></h2>
-	<div class="cbi-map-descr">
-		<%:局域网内（与代理同一宽带）通常无需转换，直接使用原始 M3U 即可。
-		此工具主要用于生成可在外网访问的播放列表（基于 DDNS 域名）。
-		请先在「IPTV 管理 → 单播IPTV代理」中添加规则并填写 DDNS 域名，再回此处转换。%>
-	</div>
+    <h2 name="content">&#128203; <%:M3U 地址转换工具%></h2>
 
-	<div class="cbi-section">
+    <div class="cbi-map-descr">
+        <%:将运营商原始 M3U 批量替换为代理地址，生成可在各种场景下使用的播放列表。
+        「路由器本机」模式可直接配置 rtp2httpd 并启用 Web Player。%>
+    </div>
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:选择代理规则%></label>
-			<div class="cbi-value-field">
-				<select id="rule_select" style="width:280px">
-					<option value="">&#8212; <%:请先在代理规则中添加规则%> &#8212;</option>
-				</select>
-			</div>
-		</div>
+    <div class="cbi-section">
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:访问方式%></label>
-			<div class="cbi-value-field">
-				<select id="access_mode" style="width:280px">
-					<option value="wan"><%:外网（DDNS域名）%></option>
-					<option value="lan"><%:局域网（路由器IP）%></option>
-				</select>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:选择代理规则%></label>
+            <div class="cbi-value-field">
+                <select id="rule_select" style="width:300px">
+                    <option value="">&#8212; <%:请先在代理规则中添加规则%> &#8212;</option>
+                </select>
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:原始源地址（host:port）%></label>
-			<div class="cbi-value-field">
-				<input type="text" id="src_addr" style="width:280px" />
-				<div class="cbi-value-description"><%:自动从所选规则填入，可手动修改%></div>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:使用场景%></label>
+            <div class="cbi-value-field">
+                <select id="access_mode" style="width:300px">
+                    <option value="loopback">&#127968; <%:路由器本机（供 rtp2httpd / Web Player 使用）%></option>
+                    <option value="lan">&#127982; <%:局域网（手机/电视盒同一网络）%></option>
+                    <option value="wan">&#127760; <%:外网（DDNS 域名，移动数据）%></option>
+                </select>
+                <div class="cbi-value-description" id="mode_hint"></div>
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:替换为（host:port）%></label>
-			<div class="cbi-value-field">
-				<input type="text" id="dst_addr" style="width:280px" />
-				<div class="cbi-value-description"><%:根据访问方式和DDNS域名自动生成，可手动修改%></div>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:原始源地址（host:port）%></label>
+            <div class="cbi-value-field">
+                <input type="text" id="src_addr" style="width:300px" />
+                <div class="cbi-value-description"><%:自动从所选规则填入，可手动修改%></div>
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:选择本地 M3U 文件%></label>
-			<div class="cbi-value-field">
-				<input type="file" id="m3u_file" accept=".m3u,.m3u8,text/plain" />
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:替换为（host:port）%></label>
+            <div class="cbi-value-field">
+                <input type="text" id="dst_addr" style="width:300px" readonly
+                       style="background:#f5f5f5" />
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:或直接粘贴 M3U 内容%></label>
-			<div class="cbi-value-field">
-				<textarea id="m3u_in" rows="8"
-				    style="width:100%;font-family:monospace;font-size:12px"></textarea>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:选择本地 M3U 文件%></label>
+            <div class="cbi-value-field">
+                <input type="file" id="m3u_file" accept=".m3u,.m3u8,text/plain" />
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<div class="cbi-value-field">
-				<button class="cbi-button cbi-button-action" id="btn_convert"
-				    style="margin-right:8px">
-					&#9881; <%:转换%>
-				</button>
-				<button class="cbi-button" id="btn_download" disabled>
-					&#11015; <%:下载转换后的 M3U%>
-				</button>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:或直接粘贴 M3U 内容%></label>
+            <div class="cbi-value-field">
+                <textarea id="m3u_in" rows="7"
+                    style="width:100%;font-family:monospace;font-size:12px"></textarea>
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<label class="cbi-value-title"><%:转换结果%></label>
-			<div class="cbi-value-field">
-				<textarea id="m3u_out" rows="8" readonly
-				    style="width:100%;font-family:monospace;font-size:12px;
-				           background:#f9f9f9"></textarea>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-action" id="btn_convert"
+                    style="margin-right:8px">
+                    &#9881; <%:转换%>
+                </button>
+                <button class="cbi-button" id="btn_download" disabled
+                    style="margin-right:8px">
+                    &#11015; <%:下载 M3U%>
+                </button>
+            </div>
+        </div>
 
-		<div class="cbi-value">
-			<div class="cbi-value-field">
-				<a class="cbi-button"
-				   href="/cgi-bin/luci/admin/services/iptv_manager"
-				   style="text-decoration:none;padding:5px 14px">
-					&#9664; <%:返回 IPTV 管理%>
-				</a>
-			</div>
-		</div>
+        <div class="cbi-value">
+            <label class="cbi-value-title"><%:转换结果%></label>
+            <div class="cbi-value-field">
+                <textarea id="m3u_out" rows="7" readonly
+                    style="width:100%;font-family:monospace;font-size:12px;
+                           background:#f9f9f9"></textarea>
+            </div>
+        </div>
 
-	</div>
+        <!-- rtp2httpd 一键配置区（仅 loopback 模式显示） -->
+        <div id="rtp2httpd_box" style="display:none;margin:12px 0;padding:14px 16px;
+             background:#f0fff4;border:1px solid #86efac;border-radius:6px">
+            <b>&#127916; <%:rtp2httpd Web Player 一键配置%></b>
+            <p style="margin:8px 0;color:#555;font-size:13px">
+                <%:点击下方按钮，将转换后的 M3U 保存到路由器并自动配置 rtp2httpd。%><br/>
+                <%:完成后通过以下地址使用 Web Player 播放：%><br/>
+                <span id="player_lan_url" style="color:#1d4ed8"></span><br/>
+                <span id="player_wan_url" style="color:#1d4ed8"></span>
+            </p>
+            <button class="cbi-button cbi-button-positive" id="btn_save_rtp"
+                disabled style="margin-right:8px">
+                &#128190; <%:保存到路由器并配置 rtp2httpd%>
+            </button>
+            <span id="save_status" style="font-size:13px;margin-left:8px"></span>
+        </div>
+
+        <div class="cbi-value" style="margin-top:4px">
+            <div class="cbi-value-field">
+                <a class="cbi-button"
+                   href="/cgi-bin/luci/admin/services/iptv_manager"
+                   style="text-decoration:none;padding:5px 14px">
+                    &#9664; <%:返回 IPTV 管理%>
+                </a>
+            </div>
+        </div>
+
+    </div>
 </div>
 
 <script type="text/javascript">
 (function() {
-	var DATA = <%=pagedata%>;
+    var DATA = <%=pagedata%>;
+    var SAVE_URL = '/cgi-bin/luci/admin/services/iptv_manager/save_rtp2httpd_m3u';
 
-	var ruleSel  = document.getElementById('rule_select');
-	var modeSel  = document.getElementById('access_mode');
-	var srcInput = document.getElementById('src_addr');
-	var dstInput = document.getElementById('dst_addr');
-	var fileInput = document.getElementById('m3u_file');
-	var textIn   = document.getElementById('m3u_in');
-	var textOut  = document.getElementById('m3u_out');
-	var btnConv  = document.getElementById('btn_convert');
-	var btnDl    = document.getElementById('btn_download');
-	var outBlobUrl = null;
+    var ruleSel   = document.getElementById('rule_select');
+    var modeSel   = document.getElementById('access_mode');
+    var modeHint  = document.getElementById('mode_hint');
+    var srcInput  = document.getElementById('src_addr');
+    var dstInput  = document.getElementById('dst_addr');
+    var fileInput = document.getElementById('m3u_file');
+    var textIn    = document.getElementById('m3u_in');
+    var textOut   = document.getElementById('m3u_out');
+    var btnConv   = document.getElementById('btn_convert');
+    var btnDl     = document.getElementById('btn_download');
+    var rtpBox    = document.getElementById('rtp2httpd_box');
+    var btnSaveRtp= document.getElementById('btn_save_rtp');
+    var saveStatus= document.getElementById('save_status');
+    var outBlobUrl = null;
 
-	DATA.rules.forEach(function(r, i) {
-		var opt = document.createElement('option');
-		opt.value = i;
-		opt.textContent = r.name +
-			'  (' + r.upstream + ' \u2192 :' + r.listen_port + ')';
-		ruleSel.appendChild(opt);
-	});
+    /* 填充规则下拉 */
+    DATA.rules.forEach(function(r, i) {
+        var opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = r.name + '  (' + r.upstream + ' \u2192 :' + r.listen_port + ')';
+        ruleSel.appendChild(opt);
+    });
 
-	function applyRule() {
-		var idx = ruleSel.value;
-		if (idx === '') {
-			srcInput.value = '';
-			dstInput.value = '';
-			return;
-		}
-		var r = DATA.rules[parseInt(idx)];
-		if (!r) return;
-		srcInput.value = r.upstream;
-		var host = (modeSel.value === 'wan')
-			? (DATA.ddns_host || '<%:（未填写DDNS域名）%>')
-			: DATA.lan_ip;
-		dstInput.value = host + ':' + r.listen_port;
-	}
+    /* 模式提示与目标地址 */
+    var HINTS = {
+        loopback: '<%:路由器内部转发，rtp2httpd 通过本机 socat 拉取联通 IPTV 流，再提供 Web Player 播放。%>',
+        lan:      '<%:局域网设备（手机/电视盒）直接通过路由器 IP 播放。%>',
+        wan:      '<%:外网设备通过 DDNS 域名访问路由器代理播放，需先配置 DDNS 和防火墙。%>'
+    };
 
-	ruleSel.addEventListener('change', applyRule);
-	modeSel.addEventListener('change', applyRule);
+    function applyRule() {
+        var mode = modeSel.value;
+        var idx  = ruleSel.value;
+        modeHint.textContent = HINTS[mode] || '';
 
-	if (DATA.rules.length > 0) {
-		ruleSel.value = '0';
-		applyRule();
-	}
+        if (idx === '') {
+            srcInput.value = '';
+            dstInput.value = '';
+            rtpBox.style.display = 'none';
+            return;
+        }
+        var r = DATA.rules[parseInt(idx)];
+        if (!r) return;
 
-	fileInput.addEventListener('change', function(e) {
-		var f = e.target.files[0];
-		if (!f) return;
-		var reader = new FileReader();
-		reader.onload = function(ev) { textIn.value = ev.target.result; };
-		reader.readAsText(f, 'utf-8');
-	});
+        srcInput.value = r.upstream;
 
-	btnConv.addEventListener('click', function() {
-		var src = srcInput.value.trim();
-		var dst = dstInput.value.trim();
-		var content = textIn.value;
+        var host;
+        if (mode === 'loopback') {
+            host = '127.0.0.1';
+            rtpBox.style.display = 'block';
+            document.getElementById('player_lan_url').textContent =
+                '  \u5C40\u57DF\u7F51: http://' + DATA.lan_ip + ':' + DATA.rtp_port + '/player';
+            document.getElementById('player_wan_url').textContent =
+                DATA.ddns_host
+                    ? '  \u5916\u7F51: http://' + DATA.ddns_host + ':' + DATA.rtp_port + '/player'
+                    : '  \u5916\u7F51: \uff08\u672A\u914D\u7F6E DDNS\uff09';
+        } else if (mode === 'lan') {
+            host = DATA.lan_ip;
+            rtpBox.style.display = 'none';
+        } else {
+            host = DATA.ddns_host || '(\u672A\u586B\u5199DDNS\u57DF\u540D)';
+            rtpBox.style.display = 'none';
+        }
+        dstInput.value = host + ':' + r.listen_port;
+    }
 
-		if (!src || !dst) {
-			alert('<%:请填写原始源地址和替换地址%>');
-			return;
-		}
-		if (!content) {
-			alert('<%:请粘贴 M3U 内容或选择文件%>');
-			return;
-		}
-		if (dst.indexOf('\uff08') >= 0) {
-			alert('<%:DDNS域名未填写，请先在「单播IPTV代理 → 全局设置」中填写域名%>');
-			return;
-		}
+    ruleSel.addEventListener('change', applyRule);
+    modeSel.addEventListener('change', applyRule);
 
-		var result = content.split(src).join(dst);
-		textOut.value = result;
+    if (DATA.rules.length > 0) {
+        ruleSel.value = '0';
+        applyRule();
+    } else {
+        modeHint.textContent = HINTS[modeSel.value] || '';
+    }
 
-		if (outBlobUrl) URL.revokeObjectURL(outBlobUrl);
-		var blob = new Blob([result], {type: 'text/plain;charset=utf-8'});
-		outBlobUrl = URL.createObjectURL(blob);
-		btnDl.disabled = false;
-		textOut.scrollIntoView({behavior: 'smooth', block: 'nearest'});
-	});
+    /* 读取文件 */
+    fileInput.addEventListener('change', function(e) {
+        var f = e.target.files[0];
+        if (!f) return;
+        var reader = new FileReader();
+        reader.onload = function(ev) { textIn.value = ev.target.result; };
+        reader.readAsText(f, 'utf-8');
+    });
 
-	btnDl.addEventListener('click', function() {
-		if (!outBlobUrl) return;
-		var a = document.createElement('a');
-		a.href = outBlobUrl;
-		a.download = 'iptv_proxy.m3u';
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-	});
+    /* 转换 */
+    btnConv.addEventListener('click', function() {
+        var src     = srcInput.value.trim();
+        var dst     = dstInput.value.trim();
+        var content = textIn.value;
+
+        if (!src || !dst) { alert('<%:请选择代理规则%>'); return; }
+        if (!content)     { alert('<%:请粘贴 M3U 内容或选择文件%>'); return; }
+        if (dst.indexOf('\uff08') >= 0) {
+            alert('<%:DDNS域名未填写，请先在全局设置中填写%>'); return;
+        }
+
+        var result = content.split(src).join(dst);
+        textOut.value = result;
+
+        if (outBlobUrl) URL.revokeObjectURL(outBlobUrl);
+        var blob = new Blob([result], {type: 'text/plain;charset=utf-8'});
+        outBlobUrl = URL.createObjectURL(blob);
+        btnDl.disabled = false;
+        btnSaveRtp.disabled = false;
+
+        textOut.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    });
+
+    /* 下载 */
+    btnDl.addEventListener('click', function() {
+        if (!outBlobUrl) return;
+        var a = document.createElement('a');
+        a.href = outBlobUrl;
+        a.download = 'iptv_proxy.m3u';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    });
+
+    /* 保存到路由器并配置 rtp2httpd */
+    btnSaveRtp.addEventListener('click', function() {
+        var content = textOut.value;
+        if (!content) {
+            alert('<%:请先执行转换%>');
+            return;
+        }
+
+        btnSaveRtp.disabled = true;
+        saveStatus.style.color = '#555';
+        saveStatus.textContent = '<%:正在保存...%>';
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', SAVE_URL, true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.withCredentials = true;
+        xhr.onload = function() {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.ok) {
+                    saveStatus.style.color = '#16a34a';
+                    saveStatus.textContent =
+                        '<%:\u2705 M3U \u5DF2\u4FDD\u5B58\uff0crtp2httpd \u5DF2\u91CD\u8F7D%>';
+                } else {
+                    saveStatus.style.color = '#dc2626';
+                    saveStatus.textContent = '<%:\u274C \u5931\u8D25%>: ' + (res.msg || '');
+                }
+            } catch(e) {
+                saveStatus.style.color = '#dc2626';
+                saveStatus.textContent = '<%:\u274C \u54CD\u5E94\u89E3\u6790\u5931\u8D25%>';
+            }
+            btnSaveRtp.disabled = false;
+        };
+        xhr.onerror = function() {
+            saveStatus.style.color = '#dc2626';
+            saveStatus.textContent = '<%:\u274C \u8BF7\u6C42\u5931\u8D25%>';
+            btnSaveRtp.disabled = false;
+        };
+        xhr.send('content=' + encodeURIComponent(content));
+    });
+
 })();
 </script>
 
