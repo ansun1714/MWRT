@@ -87,3 +87,17 @@ end
 	}
 })();
 </script>
+<script type="text/javascript">
+window.addEventListener('load', function() {
+    function closeSidebar() {
+        var cb = document.getElementById('main-menu-state');
+        if (cb && cb.checked) {
+            cb.checked = false;
+            cb.dispatchEvent(new Event('change', {bubbles: true}));
+        }
+    }
+    /* LuCI JS 在 load 后展开菜单，延迟覆盖它 */
+    setTimeout(closeSidebar, 150);
+    setTimeout(closeSidebar, 400);
+});
+</script>
