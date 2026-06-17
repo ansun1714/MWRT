@@ -63,41 +63,147 @@ end
       </fieldset>
 <!-- 把这段追加到你现有的 status.htm 末尾 -->
 <script type="text/javascript">
-(function() {
-	/* CBI 页面通过 ucodebridge 渲染，不触发 LuCI SPA 的侧边栏自动关闭。
-	   在页面加载后手动触发关闭，解决移动端侧边栏覆盖内容的问题。 */
-	function closeSidebar() {
-		/* 新 ucode LuCI：点击 overlay 触发关闭 */
-		var overlay = document.querySelector('.cover');
-		if (overlay && getComputedStyle(overlay).display !== 'none') {
-			overlay.click();
-			return;
-		}
-		/* 备用：直接操作 checkbox toggle */
-		var toggle = document.getElementById('main-menu-state');
-		if (toggle && toggle.checked) {
-			toggle.checked = false;
-			toggle.dispatchEvent(new Event('change'));
-		}
-	}
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', closeSidebar);
-	} else {
-		closeSidebar();
-	}
-})();
-</script>
-<script type="text/javascript">
-window.addEventListener('load', function() {
+/*!
+ * IPTV Manager — 移动端侧边栏自动关闭
+ * 三路并发：setInterval轮询 + MutationObserver监听 + 多ID枚举
+ * 覆盖范围：checkbox型 / CSS-class型 / body-class型 三种 LuCI 实现
+ */
+(function () {
+    var GUARD_MS = 1800;   // 页面加载后监控 1.8 秒，之后不再干预（让用户自由操作）
+    var start    = Date.now();
+    var done     = false;
+
+    function expired() { return Date.now() - start > GUARD_MS; }
+
     function closeSidebar() {
-        var cb = document.getElementById('main-menu-state');
-        if (cb && cb.checked) {
-            cb.checked = false;
-            cb.dispatchEvent(new Event('change', {bubbles: true}));
+        if (expired() || done) return;
+
+        /* ── 1. checkbox 型（枚举全部已知 ID）─────────────────── */
+        var cbIds = [
+            'main-menu-state', 'main-menu', 'menu-state',
+            'navigation', 'nav-state', 'nav-toggle',
+            'sidebar', 'sidebar-state', 'sidebar-toggle',
+            'menu-toggle', 'hamburger'
+        ];
+        cbIds.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el && el.type === 'checkbox' && el.checked) {
+                el.checked = false;
+                ['change', 'input', 'click'].forEach(function (ev) {
+                    el.dispatchEvent(new Event(ev, { bubbles: true }));
+                });
+            }
+        });
+
+        /* ── 2. 隐藏 checkbox 型（导航 toggle 通常是不可见的 checkbox）*/
+        document.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+            if (!cb.checked) return;
+            /* 跳过表单内的配置项 checkbox */
+            if (cb.form || cb.closest('.cbi-section, .cbi-value, table, form')) return;
+            var r = cb.getBoundingClientRect();
+            var s = getComputedStyle(cb);
+            var hidden = r.width === 0 || r.height === 0 ||
+                         s.display === 'none' || s.visibility === 'hidden' ||
+                         parseFloat(s.opacity) === 0 || s.position === 'absolute';
+            if (hidden) {
+                cb.checked = false;
+                ['change', 'input'].forEach(function (ev) {
+                    cb.dispatchEvent(new Event(ev, { bubbles: true }));
+                });
+            }
+        });
+
+        /* ── 3. CSS class 型──────────────────────────────────── */
+        var navSelectors = [
+            'nav', '#navigation', '.main-menu', '.navigation',
+            '[class*="sidebar"]', '[class*="nav-menu"]',
+            '[class*="left-nav"]', '[class*="side-nav"]'
+        ];
+        navSelectors.forEach(function (sel) {
+            try {
+                document.querySelectorAll(sel).forEach(function (el) {
+                    var changed = false;
+                    ['open', 'show', 'active', 'expanded', 'visible', 'in'].forEach(function (cls) {
+                        if (el.classList.contains(cls)) {
+                            el.classList.remove(cls);
+                            changed = true;
+                        }
+                    });
+                });
+            } catch (e) {}
+        });
+
+        /* ── 4. body class 型────────────────────────────────── */
+        ['menu-open', 'nav-open', 'sidebar-open', 'overlay-active',
+         'has-overlay', 'menu-visible', 'show-nav'].forEach(function (cls) {
+            document.body.classList.remove(cls);
+        });
+    }
+
+    /* ── setInterval：持续轮询，每 80ms 一次，确保覆盖所有时序 ── */
+    function startPolling() {
+        var timer = setInterval(function () {
+            if (expired()) { clearInterval(timer); return; }
+            closeSidebar();
+        }, 80);
+    }
+
+    /* ── MutationObserver：实时监听 class 变化，立即反应 ───────── */
+    if (window.MutationObserver) {
+        var obs = new MutationObserver(function (mutations) {
+            if (expired()) { obs.disconnect(); return; }
+            var needClose = mutations.some(function (m) {
+                if (m.attributeName !== 'class') return false;
+                var t = m.target;
+                return t.classList.contains('open')  ||
+                       t.classList.contains('show')  ||
+                       t.classList.contains('active') ||
+                       document.body.classList.contains('menu-open') ||
+                       document.body.classList.contains('nav-open');
+            });
+            if (needClose) { requestAnimationFrame(closeSidebar); }
+        });
+        /* 监控整个文档的 class 属性变化 */
+        var obsStart = function () {
+            obs.observe(document.documentElement, {
+                attributes: true,
+                subtree: true,
+                attributeFilter: ['class', 'checked']
+            });
+            setTimeout(function () { obs.disconnect(); }, GUARD_MS);
+        };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', obsStart);
+        } else {
+            obsStart();
         }
     }
-    /* LuCI JS 在 load 后展开菜单，延迟覆盖它 */
-    setTimeout(closeSidebar, 150);
-    setTimeout(closeSidebar, 400);
-});
+
+    /* ── 启动时序────────────────────────────────────────────── */
+    /* DOMContentLoaded：DOM 就绪后第一轮 */
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () {
+            closeSidebar();
+            startPolling();
+        });
+    } else {
+        /* 脚本加载时 DOM 已就绪 */
+        closeSidebar();
+        startPolling();
+    }
+
+    /* window.load：资源加载完、LuCI 外部 JS 执行后再压一轮 */
+    if (document.readyState === 'complete') {
+        closeSidebar();
+    } else {
+        window.addEventListener('load', function () {
+            closeSidebar();
+            /* 额外延迟补刀，防止 LuCI 懒加载的 JS 在 load 之后才展开菜单 */
+            [100, 300, 600, 900, 1200].forEach(function (d) {
+                setTimeout(closeSidebar, d);
+            });
+        });
+    }
+})();
 </script>
+
