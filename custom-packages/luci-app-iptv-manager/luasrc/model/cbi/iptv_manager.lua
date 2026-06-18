@@ -69,7 +69,7 @@ o.datatype    = "uinteger"
 o.rmempty     = true
 
 o = s:option(Value, "rejointime",
-    translate("组播重加入间隔（秒）"),
+    translate("重加入间隔（秒）"),
     translate("定期重新加入组播组，0 = 禁用"))
 o.placeholder = "0"
 o.datatype    = "uinteger"
@@ -114,7 +114,7 @@ o.rmempty     = true
 o:depends("advanced_interface_settings", "1")
 
 o = s:option(Value, "upstream_interface_fcc",
-    translate("FCC 快速换台接口"))
+    translate("FCC 接口"))
 o.placeholder = "eth1"
 o.rmempty     = true
 o:depends("advanced_interface_settings", "1")
@@ -267,15 +267,18 @@ s.addremove = false
 s.anonymous = true
 
 o = s:option(Value, "ddns_host", translate("DDNS 域名"))
-o.placeholder  = "myhome.ddns.net"
-o.rmempty      = true
-o.description  = translate(
+o.placeholder = "myhome.ddns.net"
+o.rmempty     = true
+o.description = translate(
     "填写用于远程访问的 DDNS 域名（不含端口和 http://）。" ..
     "DDNS 解析需在「系统 -> 动态DNS」中单独配置好，" ..
     "这里只是用来生成外网播放列表地址。")
 
 -- 代理规则
-s = m_proxy:section(TypedSection, "unicast_rule", translate("代理规则"))
+-- ★ 说明文字放到 section 描述（不放列头），避免表格撑高
+s = m_proxy:section(TypedSection, "unicast_rule", translate("代理规则"),
+    translate("「公网」：开启后自动在防火墙 WAN 区域放行该监听端口，" ..
+              "配合上方 DDNS 可在外网访问（需运营商分配公网IP）。"))
 s.template = "cbi/tblsection"
 s.anonymous = true
 s.addremove = true
@@ -285,36 +288,37 @@ o = s:option(Flag, "enable", translate("启用"))
 o.rmempty = false
 o.default = "1"
 
-o = s:option(Value, "name", translate("备注名称"))
-o.placeholder = "江苏联通单播"
+-- ★ size 属性控制输入框可见宽度，避免内容被截断
+o = s:option(Value, "name", translate("备注"))
+o.placeholder = "联通单播"
+o.size        = 8           -- 显示约 8 个字符宽
 
-o = s:option(Value, "upstream_host", translate("源地址IP"))
+o = s:option(Value, "upstream_host", translate("源地址"))
 o.placeholder = "112.86.202.37"
 o.datatype    = "ipaddr"
 o.rmempty     = false
+o.size        = 14          -- IPv4 最长 15 个字符
 
 o = s:option(Value, "upstream_port", translate("源端口"))
 o.placeholder = "8112"
 o.datatype    = "port"
 o.rmempty     = false
+o.size        = 5           -- 端口最长 5 位
 
-o = s:option(Value, "listen_port", translate("本机监听端口"))
+o = s:option(Value, "listen_port", translate("监听端口"))
 o.placeholder = "8112"
 o.datatype    = "port"
 o.rmempty     = false
+o.size        = 5
 
-o = s:option(Flag, "wan_access", translate("公网访问"))
-o.rmempty    = false
-o.default    = "0"
-o.description = translate(
-    "开启后自动在防火墙 WAN 区域放行该端口，" ..
-    "配合上方 DDNS 域名即可在外网访问。" ..
-    "需要运营商分配公网IP（非NAT），否则无法生效。")
+-- ★ 列标题缩短为"公网"，说明文字已移至 section 描述
+o = s:option(Flag, "wan_access", translate("公网"))
+o.rmempty = false
+o.default = "0"
 
--- ── 访问地址一览 ─────────────────────────────────────────────
+-- 访问地址一览
 local info = m_proxy:section(SimpleSection, translate("访问地址一览"))
 
--- pcdata 在 CBI 模型上下文中不可用，定义本地 HTML 转义函数
 local function esc(s)
     s = tostring(s or "")
     s = s:gsub("&", "&amp;")
@@ -350,30 +354,26 @@ m_proxy.uci:foreach("iptv_manager", "unicast_rule", function(sec)
                 "</span>"
         end
     end
-
     lines[#lines+1] = "<br/>"
 end)
 
 if #lines == 0 then
     lines[1] = translate("暂无已启用的规则")
 end
-
 info.description = table.concat(lines, "<br/>")
 
--- ── M3U 转换工具入口（醒目按钮）────────────────────────────
+-- M3U 工具入口
 local m3u_entry = m_proxy:section(SimpleSection)
 m3u_entry.description =
-    '<div style="margin:16px 0 8px 0;padding:14px 16px;' ..
+    '<div style="margin:14px 0 8px;padding:14px 16px;' ..
     'background:#f0f8ff;border:1px solid #b0d4f0;border-radius:6px">' ..
-    '<span style="font-size:15px;font-weight:bold">📋 ' ..
-    translate("M3U 地址转换工具") .. '</span><br/>' ..
+    '<b>&#128203; ' .. translate("M3U 地址转换工具") .. '</b><br/>' ..
     '<span style="color:#555;font-size:13px">' ..
     translate("将运营商原始 M3U 批量替换为本机代理地址，生成可外网访问的播放列表。") ..
     '</span><br/><br/>' ..
     '<a class="cbi-button cbi-button-action" ' ..
     'href="/cgi-bin/luci/admin/services/iptv_manager/m3u" ' ..
     'style="text-decoration:none;padding:6px 18px;font-size:14px">' ..
-    '▶ ' .. translate("打开 M3U 地址转换工具") ..
-    '</a></div>'
+    '&#9654; ' .. translate("打开 M3U 地址转换工具") .. '</a></div>'
 
 return m, m_msd, m_rtp, m_proxy
