@@ -11,15 +11,23 @@ _load_global() {
 	config_get PROGRAM global program 'rtp2httpd'
 }
 
-# ── msd_lite ──────────────────────────────────────────────────
-# UCI 结构：/etc/config/msd_lite，section 名 = config，启用选项 = enable
+# ── 确保 unicast_settings 配置节存在 ─────────────────────────
+# 旧固件升级后 /etc/config/iptv_manager 可能缺少此节，
+# 导致 LuCI 页面中 DDNS 输入框不显示。
+_ensure_unicast_settings() {
+	uci -q get iptv_manager.unicast_settings >/dev/null 2>&1 && return 0
+	uci -q set iptv_manager.unicast_settings='unicast_proxy'
+	uci -q set iptv_manager.unicast_settings.ddns_host=''
+	uci -q commit iptv_manager
+	logger -t iptv_manager "已自动创建 unicast_settings 配置节"
+}
 
+# ── msd_lite ──────────────────────────────────────────────────
 _start_msd() {
 	if [ ! -f /etc/init.d/msd_lite ]; then
 		logger -t iptv_manager -p daemon.err "找不到 /etc/init.d/msd_lite"
 		return 1
 	fi
-	# 正确路径：msd_lite.config.enable（不是 msd_lite.msd_lite.enabled）
 	uci -q set msd_lite.config.enable='1'
 	uci -q commit msd_lite
 	/etc/init.d/msd_lite start
@@ -34,7 +42,6 @@ _stop_msd() {
 }
 
 # ── rtp2HTTPd ─────────────────────────────────────────────────
-
 _start_rtp2httpd() {
 	if [ ! -f /etc/init.d/rtp2httpd ]; then
 		logger -t iptv_manager -p daemon.err "找不到 /etc/init.d/rtp2httpd"
@@ -54,7 +61,6 @@ _stop_rtp2httpd() {
 }
 
 # ── 单播代理（socat）──────────────────────────────────────────
-
 _add_unicast_fw() {
 	local cfg="$1" listen_port="$2" name="$3"
 	local sec="iptv_unicast_fw_${cfg}"
@@ -117,10 +123,12 @@ _stop_unicast_proxy() {
 }
 
 # ── procd 回调 ────────────────────────────────────────────────
-
 start_service() {
 	config_load "$CONFIG_NAME"
 	_load_global
+
+	# 确保 DDNS 配置节存在（升级旧固件后可能缺失）
+	_ensure_unicast_settings
 
 	_start_unicast_proxy
 
@@ -139,7 +147,6 @@ start_service() {
 }
 
 stop_service() {
-	# 每次停止时两个都停，避免切换程序时旧程序残留后台
 	_stop_msd
 	_stop_rtp2httpd
 	_stop_unicast_proxy
@@ -149,7 +156,6 @@ stop_service() {
 service_triggers() {
 	procd_add_reload_trigger "$CONFIG_NAME"
 	procd_add_reload_trigger "rtp2httpd"
-	# 不监听 msd_lite，避免 start_service 写 enable=1 时触发重启循环
 }
 
 reload_service() {
