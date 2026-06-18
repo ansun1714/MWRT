@@ -1,209 +1,248 @@
 <%
-local uci     = require "luci.model.uci".cursor()
-local sys     = require "luci.sys"
+local sys = require("luci.sys")
 
-local enabled    = uci:get("iptv_manager", "global", "enabled") or "0"
-local program    = uci:get("iptv_manager", "global", "program") or "rtp2httpd"
-local prog_label = (program == "msd") and "msd_lite" or "rtp2HTTPd"
-
--- msd_lite 实际运行的是 rtp2httpd 二进制，pidof msd_lite 永远找不到
--- 两个程序都用 init.d running 检测，这是唯一可靠的方式
-local is_running = false
-if program == "msd" then
-    is_running = (sys.call(
-        "/etc/init.d/msd_lite running >/dev/null 2>&1") == 0)
-else
-    is_running = (sys.call(
-        "/etc/init.d/rtp2httpd running >/dev/null 2>&1") == 0)
+local function running(name)
+    return sys.call("pgrep -f '" .. name .. "' >/dev/null 2>&1") == 0
 end
 
-local port = ""
-if program == "msd" then
-    port = uci:get("msd_lite", "config", "port") or "4022"
-else
-    uci:foreach("rtp2httpd", "rtp2httpd", function(s)
-        port = s.port or "5140"
-    end)
-    if port == "" then port = "5140" end
+local msd_ok = running("msd_lite")
+local rtp_ok = running("rtp2httpd")
+local soc_ok = running("socat")
+
+local function dot(ok)
+    if ok then
+        return "<span style='color:#22c55e'>&#9679;</span>"
+    else
+        return "<span style='color:#d1d5db'>&#9675;</span>"
+    end
 end
 %>
-<fieldset class="cbi-section" style="margin-bottom:1.2em;">
-<div style="padding:12px 18px;background:#f7f7f7;border-radius:4px;
-            display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
 
-  <span style="font-size:26px;line-height:1;
-               color:<%= is_running and '#27ae60' or '#e74c3c' %>">●</span>
-
-  <div>
-    <div style="font-weight:bold;font-size:15px;">
-      <% if is_running then %>
-        <%=translate("运行中")%> — <%= prog_label %>
-      <% else %>
-        <%=translate("已停止")%> — <%= prog_label %>
-      <% end %>
-    </div>
-    <div style="font-size:12px;color:#888;margin-top:3px;">
-      <%=translate("服务开关")%>：
-      <strong><%= enabled == "1"
-          and translate("已启用") or translate("未启用") %></strong>
-      <% if is_running and port ~= "" then %>
-        &nbsp;|&nbsp;<%=translate("端口")%>：<strong><%= port %></strong>
-      <% end %>
-    </div>
-  </div>
-
-  <div style="margin-left:auto;">
-    <a class="btn cbi-button"
-       href="<%=luci.dispatcher.build_url('admin/services/iptv_manager')%>">
-      ↻ <%=translate("刷新状态")%>
-    </a>
-  </div>
-
+<!-- ── 服务状态栏 ─────────────────────────────────── -->
+<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+            padding:6px 4px 10px;border-bottom:1px solid #e5e7eb;
+            margin-bottom:6px;font-size:13px;color:#374151">
+    <span><%=dot(msd_ok)%> msd_lite</span>
+    <span><%=dot(rtp_ok)%> rtp2HTTPd</span>
+    <span><%=dot(soc_ok)%> <%:单播代理%></span>
+    <button onclick="location.reload()" class="cbi-button"
+        style="margin-left:auto;padding:2px 10px;font-size:12px">
+        &#8635; <%:刷新%>
+    </button>
 </div>
-      </fieldset>
-<!-- 把这段追加到你现有的 status.htm 末尾 -->
+
+<!-- ══════════════════════════════════════════════════
+     移动端侧边栏修复
+     方法：动态找到真实的侧边栏元素，加自定义隐藏类
+     CSS 控制显隐，JS 在汉堡按钮点击时移除隐藏类
+     覆盖：aside型 / nav型 / div型 / checkbox型 四种实现
+     ══════════════════════════════════════════════════ -->
+<style>
+/* 我们加的隐藏类（不猜主题原有类名）*/
+@media screen and (max-width: 1200px) {
+    .iptv-sidebar-hidden {
+        transform:     translateX(-100%) !important;
+        visibility:    hidden !important;
+        pointer-events: none !important;
+        opacity:       0 !important;
+    }
+    /* 内容区填满全宽（消除侧边栏留白）*/
+    body.iptv-sidebar-was-closed #maincontent,
+    body.iptv-sidebar-was-closed #maincontent-left,
+    body.iptv-sidebar-was-closed .main-content,
+    body.iptv-sidebar-was-closed main,
+    body.iptv-sidebar-was-closed #content {
+        margin-left: 0 !important;
+        max-width:   100% !important;
+        width:       100% !important;
+    }
+}
+
+/* 备用：如果 LuCI 用 checkbox 控制，增强 :not(:checked) 隐藏 */
+@media screen and (max-width: 1200px) {
+    input[id*="menu"]:not(:checked)  ~ nav,
+    input[id*="menu"]:not(:checked)  ~ aside,
+    input[id*="nav"]:not(:checked)   ~ nav,
+    input[id*="nav"]:not(:checked)   ~ aside,
+    input[id*="sidebar"]:not(:checked) ~ nav,
+    input[id*="sidebar"]:not(:checked) ~ aside {
+        display: none !important;
+    }
+}
+</style>
+
 <script type="text/javascript">
-/*!
- * IPTV Manager — 移动端侧边栏自动关闭
- * 三路并发：setInterval轮询 + MutationObserver监听 + 多ID枚举
- * 覆盖范围：checkbox型 / CSS-class型 / body-class型 三种 LuCI 实现
- */
 (function () {
-    var GUARD_MS = 1800;   // 页面加载后监控 1.8 秒，之后不再干预（让用户自由操作）
-    var start    = Date.now();
-    var done     = false;
+    'use strict';
 
-    function expired() { return Date.now() - start > GUARD_MS; }
+    /* ── 只在移动/平板尺寸生效 ──────────────────────── */
+    if (window.innerWidth > 1200) return;
 
-    function closeSidebar() {
-        if (expired() || done) return;
+    var sidebar = null;
+    var burgers = [];
+    var HIDDEN_CLASS = 'iptv-sidebar-hidden';
 
-        /* ── 1. checkbox 型（枚举全部已知 ID）─────────────────── */
-        var cbIds = [
-            'main-menu-state', 'main-menu', 'menu-state',
-            'navigation', 'nav-state', 'nav-toggle',
-            'sidebar', 'sidebar-state', 'sidebar-toggle',
-            'menu-toggle', 'hamburger'
-        ];
-        cbIds.forEach(function (id) {
-            var el = document.getElementById(id);
-            if (el && el.type === 'checkbox' && el.checked) {
-                el.checked = false;
-                ['change', 'input', 'click'].forEach(function (ev) {
-                    el.dispatchEvent(new Event(ev, { bubbles: true }));
-                });
+    /* ── 找侧边栏元素（不依赖固定 ID）──────────────── */
+    function findSidebar() {
+        /* 优先找 aside（新版 LuCI Bootstrap 用 aside）*/
+        var el = document.querySelector(
+            'aside.main-navigation, aside.navigation, ' +
+            'aside#mainmenu, aside#navigation, aside#sidebar'
+        );
+        if (el) return el;
+
+        /* 再找有很多链接的 nav 或 div */
+        var candidates = document.querySelectorAll(
+            'nav, div#mainmenu, div#navigation, div.main-menu, ' +
+            'div.main-nav, div.sidebar, div.left-nav'
+        );
+        for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i].querySelectorAll('a').length >= 4) {
+                return candidates[i];
             }
-        });
+        }
 
-        /* ── 2. 隐藏 checkbox 型（导航 toggle 通常是不可见的 checkbox）*/
-        document.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
-            if (!cb.checked) return;
-            /* 跳过表单内的配置项 checkbox */
-            if (cb.form || cb.closest('.cbi-section, .cbi-value, table, form')) return;
-            var r = cb.getBoundingClientRect();
-            var s = getComputedStyle(cb);
-            var hidden = r.width === 0 || r.height === 0 ||
-                         s.display === 'none' || s.visibility === 'hidden' ||
-                         parseFloat(s.opacity) === 0 || s.position === 'absolute';
-            if (hidden) {
-                cb.checked = false;
-                ['change', 'input'].forEach(function (ev) {
-                    cb.dispatchEvent(new Event(ev, { bubbles: true }));
-                });
-            }
-        });
+        /* 最后找有很多 a 标签的 nav（无 id/class 限制）*/
+        var navs = document.querySelectorAll('nav');
+        for (var j = 0; j < navs.length; j++) {
+            if (navs[j].querySelectorAll('a').length >= 4) return navs[j];
+        }
 
-        /* ── 3. CSS class 型──────────────────────────────────── */
-        var navSelectors = [
-            'nav', '#navigation', '.main-menu', '.navigation',
-            '[class*="sidebar"]', '[class*="nav-menu"]',
-            '[class*="left-nav"]', '[class*="side-nav"]'
+        return null;
+    }
+
+    /* ── 找汉堡按钮（所有可能触发侧边栏的元素）────── */
+    function findBurgers() {
+        var sels = [
+            '.main-menu-btn', '.hamburger', '.menu-btn',
+            '.navbar-toggle', '.nav-toggle', '.toggle-nav',
+            'label[for*="menu"]', 'label[for*="nav"]',
+            'label[for*="sidebar"]', 'header label',
+            'header button', '.header-toggle',
+            'a.toggle', 'a[href="#"]',
+            '[class*="burger"]', '[class*="toggle"]',
+            '[data-toggle="sidebar"]', '[data-target*="nav"]'
         ];
-        navSelectors.forEach(function (sel) {
+        var found = [];
+        sels.forEach(function (s) {
             try {
-                document.querySelectorAll(sel).forEach(function (el) {
-                    var changed = false;
-                    ['open', 'show', 'active', 'expanded', 'visible', 'in'].forEach(function (cls) {
-                        if (el.classList.contains(cls)) {
-                            el.classList.remove(cls);
-                            changed = true;
-                        }
-                    });
+                document.querySelectorAll(s).forEach(function (el) {
+                    /* 排除内容区内的按钮 */
+                    if (!el.closest('.cbi-map, form, table, main')) {
+                        found.push(el);
+                    }
                 });
             } catch (e) {}
         });
+        return found;
+    }
 
-        /* ── 4. body class 型────────────────────────────────── */
-        ['menu-open', 'nav-open', 'sidebar-open', 'overlay-active',
-         'has-overlay', 'menu-visible', 'show-nav'].forEach(function (cls) {
-            document.body.classList.remove(cls);
+    /* ── 隐藏侧边栏 ──────────────────────────────── */
+    function hideSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.add(HIDDEN_CLASS);
+        document.body.classList.add('iptv-sidebar-was-closed');
+    }
+
+    /* ── 显示侧边栏（汉堡点击时）────────────────── */
+    function showSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.remove(HIDDEN_CLASS);
+    }
+
+    /* ── checkbox 型兜底关闭 ─────────────────────── */
+    function closeCheckboxNav() {
+        document.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+            if (!cb.checked) return;
+            if (cb.form || cb.closest('.cbi-section,.cbi-value,table,form')) return;
+            var r = cb.getBoundingClientRect();
+            var s = getComputedStyle(cb);
+            if (!r.width || !r.height ||
+                s.display === 'none' || s.visibility === 'hidden') {
+                cb.checked = false;
+                cb.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+        });
+        /* body/nav class 型 */
+        ['sidebar-open','nav-open','menu-open','navigation-open',
+         'has-overlay','overlay-active'].forEach(function (c) {
+            document.body.classList.remove(c);
+        });
+        document.querySelectorAll('nav,aside').forEach(function (el) {
+            ['open','show','active','expanded'].forEach(function (c) {
+                el.classList.remove(c);
+            });
         });
     }
 
-    /* ── setInterval：持续轮询，每 80ms 一次，确保覆盖所有时序 ── */
-    function startPolling() {
-        var timer = setInterval(function () {
-            if (expired()) { clearInterval(timer); return; }
-            closeSidebar();
-        }, 80);
-    }
+    /* ── 主流程 ─────────────────────────────────── */
+    function init() {
+        sidebar = findSidebar();
+        burgers = findBurgers();
 
-    /* ── MutationObserver：实时监听 class 变化，立即反应 ───────── */
-    if (window.MutationObserver) {
-        var obs = new MutationObserver(function (mutations) {
-            if (expired()) { obs.disconnect(); return; }
-            var needClose = mutations.some(function (m) {
-                if (m.attributeName !== 'class') return false;
-                var t = m.target;
-                return t.classList.contains('open')  ||
-                       t.classList.contains('show')  ||
-                       t.classList.contains('active') ||
-                       document.body.classList.contains('menu-open') ||
-                       document.body.classList.contains('nav-open');
+        if (sidebar) {
+            hideSidebar();
+
+            /* 汉堡按钮点一次显示，再点关闭（toggle）*/
+            burgers.forEach(function (btn) {
+                if (btn.__iptv_bound) return;
+                btn.__iptv_bound = true;
+                btn.addEventListener('click', function () {
+                    if (sidebar.classList.contains(HIDDEN_CLASS)) {
+                        showSidebar();
+                    } else {
+                        hideSidebar();
+                    }
+                });
             });
-            if (needClose) { requestAnimationFrame(closeSidebar); }
-        });
-        /* 监控整个文档的 class 属性变化 */
-        var obsStart = function () {
-            obs.observe(document.documentElement, {
-                attributes: true,
-                subtree: true,
-                attributeFilter: ['class', 'checked']
-            });
-            setTimeout(function () { obs.disconnect(); }, GUARD_MS);
-        };
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', obsStart);
-        } else {
-            obsStart();
         }
+
+        /* 同时做 checkbox 型兜底 */
+        closeCheckboxNav();
     }
 
-    /* ── 启动时序────────────────────────────────────────────── */
-    /* DOMContentLoaded：DOM 就绪后第一轮 */
+    /* ── 启动时序（覆盖 LuCI 懒加载 JS）────────── */
+    function boot() {
+        /* 立即尝试 */
+        init();
+
+        /* setInterval 确保覆盖延迟执行的 LuCI JS（持续 2 秒）*/
+        var iv = setInterval(function () {
+            closeCheckboxNav();
+            if (!sidebar) {
+                sidebar = findSidebar();
+                burgers = findBurgers();
+                if (sidebar) {
+                    hideSidebar();
+                    clearInterval(iv);
+                }
+            }
+        }, 100);
+        setTimeout(function () { clearInterval(iv); }, 2000);
+    }
+
+    /* 兼容所有 readyState */
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function () {
-            closeSidebar();
-            startPolling();
-        });
+        document.addEventListener('DOMContentLoaded', boot);
     } else {
-        /* 脚本加载时 DOM 已就绪 */
-        closeSidebar();
-        startPolling();
+        boot();
     }
 
-    /* window.load：资源加载完、LuCI 外部 JS 执行后再压一轮 */
-    if (document.readyState === 'complete') {
-        closeSidebar();
-    } else {
-        window.addEventListener('load', function () {
-            closeSidebar();
-            /* 额外延迟补刀，防止 LuCI 懒加载的 JS 在 load 之后才展开菜单 */
-            [100, 300, 600, 900, 1200].forEach(function (d) {
-                setTimeout(closeSidebar, d);
-            });
+    /* window.load 后追加一轮（确保 LuCI 全部 JS 跑完）*/
+    window.addEventListener('load', function () {
+        /* 重新找一次（load 后 DOM 可能有变化）*/
+        sidebar = findSidebar();
+        burgers = findBurgers();
+        if (sidebar) hideSidebar();
+        [0, 200, 500, 900, 1400].forEach(function (d) {
+            setTimeout(function () {
+                closeCheckboxNav();
+                if (sidebar && !sidebar.classList.contains(HIDDEN_CLASS)) {
+                    hideSidebar();
+                }
+            }, d);
         });
-    }
+    });
+
 })();
 </script>
-
