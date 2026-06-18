@@ -10,10 +10,8 @@ local rtp_ok = running("rtp2httpd")
 local soc_ok = running("socat")
 
 local function dot(ok)
-    if ok then
-        return "<span style='color:#22c55e'>&#9679;</span>"
-    else
-        return "<span style='color:#d1d5db'>&#9675;</span>"
+    if ok then return "<span style='color:#22c55e'>&#9679;</span>"
+    else        return "<span style='color:#d1d5db'>&#9675;</span>"
     end
 end
 %>
@@ -31,10 +29,7 @@ end
 </div>
 
 <style>
-/* ================================================================
-   1. 代理规则表格 - 移动端优化
-      允许横向滑动，确保所有列可见，输入框内容不被截断
-   ================================================================ */
+/* 代理规则表格：移动端横向滑动 */
 .cbi-section-table {
     display: block;
     overflow-x: auto;
@@ -47,191 +42,112 @@ end
     vertical-align: middle;
     padding: 4px 6px;
 }
-.cbi-section-table input[type="text"],
-.cbi-section-table input[type="number"],
-.cbi-section-table input[type="password"] {
-    box-sizing: content-box;
-}
-
-/* ================================================================
-   2. 移动端侧边栏强制关闭修复
-      同时覆盖：checkbox型 / CSS-class型 / aside型 三种 LuCI 实现
-   ================================================================ */
-@media screen and (max-width: 1200px) {
-    .iptv-sidebar-hidden {
-        transform:      translateX(-100%) !important;
-        visibility:     hidden !important;
-        pointer-events: none !important;
-        opacity:        0 !important;
-    }
-    body.iptv-sidebar-was-closed #maincontent,
-    body.iptv-sidebar-was-closed #maincontent-left,
-    body.iptv-sidebar-was-closed .main-content,
-    body.iptv-sidebar-was-closed main,
-    body.iptv-sidebar-was-closed #content {
-        margin-left: 0 !important;
-        max-width:   100% !important;
-        width:       100% !important;
-    }
-
-    /* checkbox 型备用 */
-    input[id*="menu"]:not(:checked)    ~ nav,
-    input[id*="menu"]:not(:checked)    ~ aside,
-    input[id*="nav"]:not(:checked)     ~ nav,
-    input[id*="nav"]:not(:checked)     ~ aside,
-    input[id*="sidebar"]:not(:checked) ~ nav,
-    input[id*="sidebar"]:not(:checked) ~ aside {
-        display: none !important;
-    }
-}
 </style>
 
 <script type="text/javascript">
+/*!
+ * 移动端侧边栏初始关闭
+ *
+ * 策略（解决汉堡失效问题）：
+ *   1. 注入临时 CSS 隐藏侧边栏（不绑定任何点击事件）
+ *   2. window.load 后连续关闭 3 次（防 LuCI JS 在 load 时展开）
+ *   3. 800ms 后移除临时 CSS，将控制权完全还给 LuCI
+ *   4. 之后汉堡按钮由 LuCI 自己的逻辑处理，我们不再干预
+ */
 (function () {
-    'use strict';
-
     if (window.innerWidth > 1200) return;
 
-    var sidebar = null;
-    var HIDDEN  = 'iptv-sidebar-hidden';
-    var GUARD   = 2000;
-    var start   = Date.now();
+    /* ── 临时隐藏 CSS（阶段性拦截，不是永久覆盖）────── */
+    var STYLE_ID = 'iptv-init-sidebar-hide';
+    var style = document.createElement('style');
+    style.id  = STYLE_ID;
+    style.textContent =
+        /* aside 型（新版 luci-theme-bootstrap）*/
+        'aside.main-navigation,' +
+        'aside.navigation,' +
+        'aside#mainmenu {' +
+        '  transform:translateX(-100%)!important;' +
+        '  visibility:hidden!important;' +
+        '}' +
+        /* nav/div 型（旧/中版本）*/
+        'nav#mainmenu,' +
+        'div#mainmenu,' +
+        'nav.main-menu,' +
+        'div.main-menu,' +
+        'nav.navigation,' +
+        '.sidebar {' +
+        '  display:none!important;' +
+        '}' +
+        /* 内容区填满宽度 */
+        '#maincontent,#maincontent-left,' +
+        '.main-content,main,#content {' +
+        '  margin-left:0!important;' +
+        '  max-width:100%!important;' +
+        '}';
 
-    function expired() { return Date.now() - start > GUARD; }
-
-    function findSidebar() {
-        var el = document.querySelector(
-            'aside.main-navigation, aside.navigation, ' +
-            'aside#mainmenu, aside#navigation, aside#sidebar'
-        );
-        if (el) return el;
-
-        var candidates = document.querySelectorAll(
-            'nav, div#mainmenu, div#navigation, div.main-menu, ' +
-            'div.main-nav, div.sidebar, div.left-nav'
-        );
-        for (var i = 0; i < candidates.length; i++) {
-            if (candidates[i].querySelectorAll('a').length >= 4)
-                return candidates[i];
+    function injectStyle() {
+        if (!document.getElementById(STYLE_ID)) {
+            document.head.appendChild(style);
         }
-        var navs = document.querySelectorAll('nav');
-        for (var j = 0; j < navs.length; j++) {
-            if (navs[j].querySelectorAll('a').length >= 4) return navs[j];
-        }
-        return null;
     }
 
-    function findBurgers() {
-        var sels = [
-            '.main-menu-btn', '.hamburger', '.menu-btn', '.navbar-toggle',
-            '.nav-toggle', '.toggle-nav', 'label[for*="menu"]',
-            'label[for*="nav"]', 'label[for*="sidebar"]',
-            'header label', 'header button', '.header-toggle',
-            '[class*="burger"]', '[data-toggle="sidebar"]'
-        ];
-        var found = [];
-        sels.forEach(function (s) {
-            try {
-                document.querySelectorAll(s).forEach(function (el) {
-                    if (!el.closest('.cbi-map, form, table, main'))
-                        found.push(el);
+    /* 尽早注入 */
+    if (document.head) {
+        injectStyle();
+    } else {
+        document.addEventListener('DOMContentLoaded', injectStyle);
+    }
+
+    /* ── 关闭侧边栏状态（不绑定汉堡，只做状态重置）── */
+    function closeNav() {
+        /* class 型 */
+        document.querySelectorAll('nav,aside,div#mainmenu,.main-menu').forEach(
+            function (el) {
+                ['open','show','active','expanded','in'].forEach(function (c) {
+                    el.classList.remove(c);
                 });
-            } catch (e) {}
+            }
+        );
+        /* body class 型 */
+        ['sidebar-open','nav-open','menu-open','has-overlay',
+         'navigation-open','overlay-active'].forEach(function (c) {
+            document.body.classList.remove(c);
         });
-        return found;
-    }
-
-    function hideSidebar() {
-        if (!sidebar) return;
-        sidebar.classList.add(HIDDEN);
-        document.body.classList.add('iptv-sidebar-was-closed');
-    }
-
-    function showSidebar() {
-        if (!sidebar) return;
-        sidebar.classList.remove(HIDDEN);
-    }
-
-    function closeCheckboxNav() {
+        /* checkbox 型（隐藏的导航 checkbox）*/
         document.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
             if (!cb.checked) return;
-            if (cb.form || cb.closest('.cbi-section,.cbi-value,table,form')) return;
+            if (cb.form || cb.closest('.cbi-section,.cbi-value,form,table')) return;
             var r = cb.getBoundingClientRect();
-            var s = getComputedStyle(cb);
             if (!r.width || !r.height ||
-                s.display === 'none' || s.visibility === 'hidden') {
+                getComputedStyle(cb).display === 'none') {
                 cb.checked = false;
                 cb.dispatchEvent(new Event('change', {bubbles: true}));
             }
         });
-        ['sidebar-open','nav-open','menu-open','navigation-open',
-         'has-overlay','overlay-active'].forEach(function (c) {
-            document.body.classList.remove(c);
-        });
-        document.querySelectorAll('nav,aside').forEach(function (el) {
-            ['open','show','active','expanded'].forEach(function (c) {
-                el.classList.remove(c);
-            });
-        });
     }
 
-    function init() {
-        sidebar = findSidebar();
-        if (sidebar) {
-            hideSidebar();
-            findBurgers().forEach(function (btn) {
-                if (btn.__iptv_bound) return;
-                btn.__iptv_bound = true;
-                btn.addEventListener('click', function () {
-                    if (sidebar.classList.contains(HIDDEN)) showSidebar();
-                    else hideSidebar();
-                });
-            });
-        }
-        closeCheckboxNav();
+    /* ── 移除临时 CSS，将控制权交回 LuCI ──────────── */
+    function handOffToLuci() {
+        closeNav(); /* 移除前最后关一次，确保处于关闭状态 */
+        var el = document.getElementById(STYLE_ID);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+        /*
+         * 至此：
+         *   - 侧边栏处于关闭状态
+         *   - 临时 CSS 已移除
+         *   - LuCI 的汉堡按钮逻辑不再被我们的 !important 阻挡
+         *   - 用户点汉堡可正常打开/关闭侧边栏
+         */
     }
 
-    function boot() {
-        init();
-        var iv = setInterval(function () {
-            if (expired()) { clearInterval(iv); return; }
-            closeCheckboxNav();
-            if (!sidebar) {
-                sidebar = findSidebar();
-                if (sidebar) { hideSidebar(); clearInterval(iv); }
-            }
-        }, 100);
-        setTimeout(function () { clearInterval(iv); }, GUARD);
-
-        if (window.MutationObserver) {
-            var obs = new MutationObserver(function (muts) {
-                if (expired()) { obs.disconnect(); return; }
-                if (muts.some(function (m) { return m.attributeName === 'class'; }))
-                    requestAnimationFrame(closeCheckboxNav);
-            });
-            obs.observe(document.documentElement, {
-                attributes: true, subtree: true,
-                attributeFilter: ['class', 'style']
-            });
-            setTimeout(function () { obs.disconnect(); }, GUARD);
-        }
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
-    } else {
-        boot();
-    }
-
+    /* ── 执行时序 ─────────────────────────────────── */
     window.addEventListener('load', function () {
-        sidebar = findSidebar();
-        if (sidebar) hideSidebar();
-        [0, 200, 500, 900, 1400].forEach(function (d) {
-            setTimeout(function () {
-                closeCheckboxNav();
-                if (sidebar && !sidebar.classList.contains(HIDDEN)) hideSidebar();
-            }, d);
+        /* load 后连续关闭 3 次（覆盖 LuCI 懒加载 JS 的展开操作）*/
+        [0, 200, 500].forEach(function (d) {
+            setTimeout(closeNav, d);
         });
+        /* 800ms 后移交控制权 */
+        setTimeout(handOffToLuci, 800);
     });
 })();
 </script>
