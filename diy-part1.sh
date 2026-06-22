@@ -15,7 +15,7 @@ echo "src-git qmodem https://github.com/FUjr/modem_feeds.git;main" \
 echo "src-git rtp2httpd https://github.com/stackia/rtp2httpd.git" \
     >> feeds.conf.default
 echo "src-git helloworld https://github.com/fw876/helloworld.git" \
->> feeds.conf.default
+    >> feeds.conf.default
 # ─── 直接克隆到 package 目录 ──────────────────────────────
 
 # msd_lite：使用 -c <config_file> 启动，其 init.d 负责读取配置并生成启动参数
