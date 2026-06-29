@@ -353,6 +353,53 @@ EOF
 
 esac
 
+# ════════════════════════════════════════════
+#  【新增】内核兼容性修复 (针对 qmi_wwan_f)
+#  解决报错：
+#  1. hrtimer_init (Linux 6.17+ API变更)
+#  2. qma_setting_store (缺少 static 声明导致 -Wmissing-prototypes)
+# ════════════════════════════════════════════
+
+echo ">>> [10] 正在注入 qmi_wwan_f 内核兼容补丁..."
+
+# 确保补丁目录存在
+PATCH_DIR="package/wwan/driver/fibocom_QMI_WWAN/patches"
+mkdir -p "${PATCH_DIR}"
+
+# 写入第 1 个补丁：修复 hrtimer_init 参数不匹配
+cat > "${PATCH_DIR}/100-fix-linux6.17-hrtimer.patch" << 'EOF'
+--- a/src/qmi_wwan_f.c
++++ b/src/qmi_wwan_f.c
+@@ -1208,6 +1208,10 @@
+ 	priv->agg_timer_data.rid = rid;
+ 	priv->agg_hrtimer.function = rmnet_usb_tx_agg_timer_cb;
+ 	priv->agg_timer_data.priv = priv;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,17,0)
++	hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC);
++#else
+ 	hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
++#endif
+
+ 	return 0;
+EOF
+
+# 写入第 2 个补丁：修复 qma_setting_store 缺少 static 声明
+cat > "${PATCH_DIR}/200-fix-missing-prototype.patch" << 'EOF'
+--- a/src/qmi_wwan_f.c
++++ b/src/qmi_wwan_f.c
+@@ -1334,7 +1334,7 @@
+ 	return 0;
+ }
+
+-int qma_setting_store(struct device *dev, QMAP_SETTING *qmap_settings, size_t size) {
++static int qma_setting_store(struct device *dev, QMAP_SETTING *qmap_settings, size_t size) {
+ 	int ret = 0;
+ 	...
+ }
+EOF
+
+echo ">>> [10] 补丁注入完成！"
+
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
 echo "========================================"
