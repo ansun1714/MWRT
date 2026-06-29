@@ -354,22 +354,22 @@ EOF
 esac
 
 # ════════════════════════════════════════════
-#  【新增】内核兼容性修复 (针对 qmi_wwan_f)
-#  解决报错：
-#  1. hrtimer_init (Linux 6.17+ API变更)
-#  2. qma_setting_store (缺少 static 声明导致 -Wmissing-prototypes)
+#  【修复】内核兼容性修复 (修正路径错误)
+#  解决问题：hrtimer_init (Linux 6.17+ API变更)
+#  和 qma_setting_store (-Wmissing-prototypes)
 # ════════════════════════════════════════════
 
-echo ">>> [10] 正在注入 qmi_wwan_f 内核兼容补丁..."
+echo ">>> [10] 注入 qmi_wwan_f 内核补丁 (修复路径为根目录)..."
 
 # 确保补丁目录存在
 PATCH_DIR="package/wwan/driver/fibocom_QMI_WWAN/patches"
 mkdir -p "${PATCH_DIR}"
 
-# 写入第 1 个补丁：修复 hrtimer_init 参数不匹配
+# 写入补丁 1：修复 hrtimer_init
+# 注意：文件路径必须为 a/qmi_wwan_f.c (不是 a/src/qmi_wwan_f.c)
 cat > "${PATCH_DIR}/100-fix-linux6.17-hrtimer.patch" << 'EOF'
---- a/src/qmi_wwan_f.c
-+++ b/src/qmi_wwan_f.c
+--- a/qmi_wwan_f.c
++++ b/qmi_wwan_f.c
 @@ -1208,6 +1208,10 @@
  	priv->agg_timer_data.rid = rid;
  	priv->agg_hrtimer.function = rmnet_usb_tx_agg_timer_cb;
@@ -383,10 +383,10 @@ cat > "${PATCH_DIR}/100-fix-linux6.17-hrtimer.patch" << 'EOF'
  	return 0;
 EOF
 
-# 写入第 2 个补丁：修复 qma_setting_store 缺少 static 声明
+# 写入补丁 2：修复 missing-prototypes
 cat > "${PATCH_DIR}/200-fix-missing-prototype.patch" << 'EOF'
---- a/src/qmi_wwan_f.c
-+++ b/src/qmi_wwan_f.c
+--- a/qmi_wwan_f.c
++++ b/qmi_wwan_f.c
 @@ -1334,7 +1334,7 @@
  	return 0;
  }
@@ -398,7 +398,7 @@ cat > "${PATCH_DIR}/200-fix-missing-prototype.patch" << 'EOF'
  }
 EOF
 
-echo ">>> [10] 补丁注入完成！"
+echo ">>> [10] 补丁写入成功！请重新运行编译。"
 
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
