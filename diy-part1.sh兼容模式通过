@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "========================================"
-echo " DIY Part 1 - 配置软件源"
+echo " DIY Part 1 - MWRT 软件源配置"
 echo "========================================"
 
 # ── 添加自定义 Feeds ─────────────────────────
@@ -24,7 +24,7 @@ cp -r "${GITHUB_WORKSPACE}/custom-packages/luci-app-iptv-manager" \
 
 # ════════════════════════════════════════════════════════════════
 #  修复 gpio-button-hotplug 上游兼容性问题
-#  根因：LEDE 上游更新该包使用了 Linux 6.8 / 6.11 新 API：
+#  根因：上游更新该包使用了 Linux 6.8 / 6.11 新 API：
 #    1. devm_kmemdup_array  → Linux >= 6.8，我们的内核：5.10 / 6.6
 #    2. void .remove 回调   → Linux >= 6.11，5.10 / 6.6 必须返回 int
 #  影响：所有设备（ARM Filogic + MIPS MT7621）全部编译失败

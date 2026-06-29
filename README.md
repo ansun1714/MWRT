@@ -1,13 +1,13 @@
-# Fudy WH3000 Pro —— LEDE 自定义固件编译
+# MWRT 自定义固件编译
 
 基于 [LEDE](https://github.com/coolsnowwolf/lede) 项目，通过 GitHub Actions 自动编译，
 专为 **华硅科技 WH3000 Pro**（MT7981 / MediaTek Filogic）定制的 OpenWrt 固件。
 
 [
 
-![Build LEDE](../../actions/workflows/build-lede.yml/badge.svg)
+![Build MWRT](../../actions/workflows/build.yml/badge.svg)
 
-](../../actions/workflows/build-lede.yml)
+](../../actions/workflows/build.yml)
 [
 
 ![Build IPK Bundle](../../actions/workflows/build-bundle-ipk.yml/badge.svg)

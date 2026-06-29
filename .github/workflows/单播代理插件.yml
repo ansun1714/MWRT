@@ -1,4 +1,4 @@
-name: 🧪 测试编译单播代理插件
+name: 🧪 MWRT 测试编译单播代理插件
 
 on:
   workflow_dispatch:

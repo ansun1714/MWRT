@@ -1,6 +1,6 @@
 # custom-packages
 
-固件自定义软件包目录，编译时自动复制进 LEDE 源码的 `package/` 目录。
+固件自定义软件包目录，编译时自动复制进 MWRT 源码的 `package/` 目录。
 
 ## 目录结构
 custom-packages/

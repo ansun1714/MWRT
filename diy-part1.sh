@@ -1,6 +1,6 @@
 #!/bin/bash
 # DIY 脚本第一部分：添加自定义软件源
-# 运行时机：在 LEDE 源码目录内，feeds update 执行之前
+# 运行时机：在 MWRT 源码目录内，feeds update 执行之前
 
 set -euo pipefail
 

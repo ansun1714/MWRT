@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "========================================"
-echo " WH3000 专用优化脚本开始"
+echo " MWRT 固件定制脚本开始"
 echo "========================================"
 
 # =====================================================
@@ -11,7 +11,7 @@ mkdir -p files/etc/uci-defaults
 
 cat > files/etc/uci-defaults/01-system << 'EOF'
 #!/bin/sh
-uci set system.@system[0].hostname='Fudy_pro'
+uci set system.@system[0].hostname='MWRT'
 uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
 uci commit system
@@ -282,7 +282,7 @@ cat > files/etc/banner << 'EOF'
    \ V  V / |  _  | ___) | |_| | |_| | |_| |
     \_/\_/  |_| |_||____/ \___/ \___/ \___/
 
-      WH3000 Optimized Build
+      MWRT Firmware Build
 
 EOF
 

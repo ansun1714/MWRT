@@ -20,7 +20,7 @@ case "$DEVICE" in
   wh3000)    HOSTNAME="WH3000"     ;;
   wh3000pro) HOSTNAME="WH3000-Pro" ;;
   re-sp-01b) HOSTNAME="RE-SP-01B"  ;;
-  *)         HOSTNAME="DONGZAI"    ;;
+  *HOSTNAME="MWRT"    ;;
 esac
 
 cat > files/etc/uci-defaults/01-system << EOF

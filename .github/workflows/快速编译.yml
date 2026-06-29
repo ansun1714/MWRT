@@ -1,4 +1,4 @@
-name: 🏗️ DONGZAI 固件编译(显示内核) - 快速增量 / 完全重编译
+name: 🏗️ MWRT-DONGZAI 固件编译(显示内核) - 快速增量 / 完全重编译
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
       contents: write
 
     steps:
-      - name: 🎯 DONGZAI 固件工厂
+      - name: 🎯 MWRT 固件工厂
         run: |
           cat << 'EOF'
             ____   ___  _   _  ____ _____    _    ___
@@ -40,7 +40,7 @@ jobs:
            | | | | | | |  \| | |  _ / /  / _ \  | |
            | |_| | |_| | |\  | |_| |/ /__/ ___ \ | |
            |____/ \___/|_| \_|\____/____/_/   \_\___|
-                  🏗️  固件工厂  ·  OpenWrt / LEDE
+                  🏗️  固件工厂  ·  OpenWrt
           EOF
           DEVICE="${{ github.event.inputs.device }}"
           BUILD_MODE="${{ github.event.inputs.build_mode }}"
@@ -54,7 +54,7 @@ jobs:
           echo "  │  🔧 规格：$DSPEC"
           echo "  │  ⚡ 模式：$BUILD_MODE"
           echo "  │  🕐 时间：$(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "  │  🔖 标识：DONGZAI"
+          echo "  │  🔖 标识：MWRT-DONGZAI"
           echo "  └─────────────────────────────────────────┘"
 
       - name: 📥 检出仓库
@@ -94,11 +94,11 @@ jobs:
           echo "✅ 缓存已清理"
 
       # 关键：每次都重新克隆源码（不缓存源码目录，避免 diy-part1.sh 冲突）
-      - name: 📦 克隆 LEDE 源码
+      - name: 📦 克隆源码
         run: |
           rm -rf openwrt   # 确保删除旧目录
           git clone --depth=1 -b $LEDE_BRANCH $LEDE_REPO openwrt
-          echo "── LEDE 最新提交 ──"
+          echo "── 源码最新提交 ──"
           git -C openwrt log --oneline -3
 
       - name: 🔧 DIY Part 1 - 配置 Feeds
@@ -266,7 +266,7 @@ jobs:
           find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" -o -name "*.tar" \) -exec cp {} upload/ \;
           cd upload
           for f in *; do
-            newname=$(echo "$f" | sed 's/openwrt/DONGZAI/g; s/lede/DONGZAI/g')
+            newname=$(echo "$f" | sed 's/openwrt/MWRT-DONGZAI/g; s/lede/MWRT-DONGZAI/g')
             [ "$f" != "$newname" ] && mv "$f" "$newname"
           done
           ls -lh
@@ -279,7 +279,7 @@ jobs:
       - name: 📤 上传 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DONGZAI_${{ github.event.inputs.device }}_K${{ steps.kernel.outputs.kernel }}_${{ github.run_number }}
+          name: MWRT-DONGZAI_${{ github.event.inputs.device }}_K${{ steps.kernel.outputs.kernel }}_${{ github.run_number }}
           path: upload/
           retention-days: 30
 
@@ -290,7 +290,7 @@ jobs:
           DATE=$(date +'%Y-%m-%d')
           TIME=$(date +'%H%M')
           KERNEL="${{ steps.kernel.outputs.kernel }}"
-          TAG="DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
+          TAG="MWRT-DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_date=$DATE" >> "$GITHUB_OUTPUT"
           echo "生成 Tag：$TAG"
@@ -299,18 +299,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: "🏗️ DONGZAI · ${{ github.event.inputs.device }} · Linux ${{ steps.kernel.outputs.kernel }}"
+          name: "🏗️ MWRT-DONGZAI · ${{ github.event.inputs.device }} · Linux ${{ steps.kernel.outputs.kernel }}"
           files: upload/*
           body: |
-            ## 🏗️ DONGZAI 固件工厂
+            ## 🏗️ MWRT 固件工厂
             | 项目 | 内容 |
             |---|---|
             | 📦 设备 | ${{ github.event.inputs.device }} |
             | 🐧 Linux 内核 | ${{ steps.kernel.outputs.kernel }} |
-            | 🔖 LEDE Commit | ${{ steps.kernel.outputs.commit }} |
+            | 🔖 MWRT Commit | ${{ steps.kernel.outputs.commit }} |
             | 🕐 编译时间 | ${{ steps.kernel.outputs.build_time }} |
             | 📅 编译日期 | ${{ steps.tag.outputs.release_date }} |
-            | 🔖 标识 | DONGZAI |
+            | 🔖 标识 | MWRT-DONGZAI |
             | ⚡ 编译模式 | ${{ github.event.inputs.build_mode }} |
             ### 固件文件说明
             | 文件 | 用途 |
@@ -321,7 +321,7 @@ jobs:
             - 首次刷入请先备份原厂固件
             - 建议使用 `sysupgrade` 命令升级，勿勾选保留配置
             ---
-            🤖 由 GitHub Actions 自动编译 · DONGZAI 固件工厂
+            🤖 由 GitHub Actions 自动编译 · MWRT 固件工厂
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

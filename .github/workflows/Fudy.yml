@@ -82,11 +82,11 @@ jobs:
           device-tree-compiler
 
     # =========================
-    # 克隆 LEDE
+    # 克隆 MWRT
     # =========================
-    - name: 克隆 LEDE 源码
+    - name: 克隆 MWRT 源码
       run: |
-        git clone --depth=1 -b master https://github.com/coolsnowwolf/lede openwrt
+        git clone --depth=1 -b master https://github.com/coolsnowwolf/MWRT openwrt
 
     # =========================
     # DIY1
@@ -193,7 +193,7 @@ jobs:
         cd upload
 
         for file in *; do
-          newname=$(echo "$file" | sed 's/openwrt/LEDE/g')
+          newname=$(echo "$file" | sed 's/openwrt/MWRT/g')
           mv "$file" "$newname"
         done
 
@@ -205,7 +205,7 @@ jobs:
     - name: 上传 Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: LEDE_${{ github.event.inputs.device }}
+        name: MWRT_${{ github.event.inputs.device }}
         path: upload/
 
     # =========================
@@ -214,7 +214,7 @@ jobs:
     - name: 生成 Release 标签
       id: tag
       run: |
-        echo "release_tag=LEDE-6.6-$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+        echo "release_tag=MWRT-6.6-$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
     # =========================
     # 发布 Release
