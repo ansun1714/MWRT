@@ -12,15 +12,15 @@ mkdir -p files/etc/config
 mkdir -p files/etc/init.d
 
 # ════════════════════════════════════════════
-#  通用设置（所有设备共享）
+# 通用设置（所有设备共享）
 # ════════════════════════════════════════════
 
 # ── 1. 主机名（以型号命名）─────────────────
 case "$DEVICE" in
-  wh3000)    HOSTNAME="WH3000"     ;;
+  wh3000)    HOSTNAME="WH3000" ;;
   wh3000pro) HOSTNAME="WH3000-Pro" ;;
-  re-sp-01b) HOSTNAME="RE-SP-01B"  ;;
-  *  HOSTNAME="MWRT"    ;;
+  re-sp-01b) HOSTNAME="RE-SP-01B" ;;
+  *)         HOSTNAME="MWRT" ;;
 esac
 
 cat > files/etc/uci-defaults/01-system << EOF
@@ -36,7 +36,7 @@ echo ">>> [1] 主机名：${HOSTNAME}"
 
 # ── 2. 默认主题 ─────────────────────────────
 sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
-    package/lean/default-settings/files/zzz-default-settings 2>/dev/null
+  package/lean/default-settings/files/zzz-default-settings 2>/dev/null
 echo ">>> [2] 默认主题修改完成"
 
 # ── 3. Lucky 权限 ────────────────────────────
@@ -66,72 +66,67 @@ echo ">>> [9-1] msd_lite UCI 配置写入完成"
 # ── 9-2. msd_lite 双后端 init.d ──────────────
 cat > files/etc/init.d/msd_lite << 'INITEOF'
 #!/bin/sh /etc/rc.common
-
 START=99
 USE_PROCD=1
 
 start_service() {
-	local enable type port source threads buffer rejointime PROG
-
-	config_load "msd_lite"
-	config_get_bool enable "config" "enable" "0"
-	[ "$enable" -eq "1" ] || return 0
-
-	config_get type       "config" "type"        "0"
-	config_get port       "config" "port"         "7088"
-	config_get source     "config" "source"       "eth0"
-	config_get threads    "config" "threads"      "0"
-	config_get buffer     "config" "buffer"       "16384"
-	config_get rejointime "config" "rejointime"   "0"
-
-	mkdir -p /var/etc
-
-	if [ "$type" = "0" ]; then
-		PROG="/usr/bin/msd_lite"
-		cat > /var/etc/msd_lite.conf << XMLEOF
+    local enable type port source threads buffer rejointime PROG
+    config_load "msd_lite"
+    config_get_bool enable "config" "enable" "0"
+    [ "$enable" -eq "1" ] || return 0
+    config_get type       "config" "type"       "0"
+    config_get port       "config" "port"       "7088"
+    config_get source     "config" "source"     "eth0"
+    config_get threads    "config" "threads"    "0"
+    config_get buffer     "config" "buffer"     "16384"
+    config_get rejointime "config" "rejointime" "0"
+    mkdir -p /var/etc
+    if [ "$type" = "0" ]; then
+        PROG="/usr/bin/msd_lite"
+        cat > /var/etc/msd_lite.conf << XMLEOF
 <?xml version="1.0" encoding="utf-8"?>
 <msd>
-	<log><file>/var/log/msd_lite.log</file></log>
-	<threadPool>
-		<threadsCountMax>${threads}</threadsCountMax>
-		<fBindToCPU>yes</fBindToCPU>
-	</threadPool>
-	<HTTP>
-		<bindList>
-			<bind><address>0.0.0.0:${port}</address></bind>
-			<bind><address>[::]:${port}</address></bind>
-		</bindList>
-		<hostnameList><hostname>*</hostname></hostnameList>
-	</HTTP>
-	<hubProfileList>
-		<hubProfile>
-			<fDropSlowClients>no</fDropSlowClients>
-			<fSocketTCPNoDelay>yes</fSocketTCPNoDelay>
-			<precache>${buffer}</precache>
-			<ringBufSize>1024</ringBufSize>
-			<headersList>
-				<header>Pragma: no-cache</header>
-				<header>Content-Type: video/mpeg</header>
-			</headersList>
-		</hubProfile>
-	</hubProfileList>
-	<sourceProfileList>
-		<sourceProfile>
-			<skt>
-				<rcvBuf>512</rcvBuf>
-				<rcvTimeout>2</rcvTimeout>
-			</skt>
-			<multicast>
-				<ifName>${source}</ifName>
-				<rejoinTime>${rejointime}</rejoinTime>
-			</multicast>
-		</sourceProfile>
-	</sourceProfileList>
+  <log><file>/var/log/msd_lite.log</file></log>
+  <threadPool>
+    <threadsCountMax>${threads}</threadsCountMax>
+    <fBindToCPU>yes</fBindToCPU>
+  </threadPool>
+  <HTTP>
+    <bindList>
+      <bind><address>0.0.0.0:${port}</address></bind>
+      <bind><address>[::]:${port}</address></bind>
+    </bindList>
+    <hostnameList><hostname>*</hostname></hostnameList>
+  </HTTP>
+  <hubProfileList>
+    <hubProfile>
+      <fDropSlowClients>no</fDropSlowClients>
+      <fSocketTCPNoDelay>yes</fSocketTCPNoDelay>
+      <precache>${buffer}</precache>
+      <ringBufSize>1024</ringBufSize>
+      <headersList>
+        <header>Pragma: no-cache</header>
+        <header>Content-Type: video/mpeg</header>
+      </headersList>
+    </hubProfile>
+  </hubProfileList>
+  <sourceProfileList>
+    <sourceProfile>
+      <skt>
+        <rcvBuf>512</rcvBuf>
+        <rcvTimeout>2</rcvTimeout>
+      </skt>
+      <multicast>
+        <ifName>${source}</ifName>
+        <rejoinTime>${rejointime}</rejoinTime>
+      </multicast>
+    </sourceProfile>
+  </sourceProfileList>
 </msd>
 XMLEOF
-	else
-		PROG="/usr/bin/rtp2httpd"
-		cat > /var/etc/msd_lite.conf << RTPEOF
+    else
+        PROG="/usr/bin/rtp2httpd"
+        cat > /var/etc/msd_lite.conf << RTPEOF
 [global]
 verbosity = 3
 upstream-interface = ${source}
@@ -143,39 +138,36 @@ zerocopy-on-send = yes
 [bind]
 * ${port}
 RTPEOF
-	fi
-
-	procd_open_instance
-	procd_set_param command "$PROG" -c /var/etc/msd_lite.conf
-	procd_set_param respawn
-	procd_set_param stderr 1
-	procd_close_instance
+    fi
+    procd_open_instance
+    procd_set_param command "$PROG" -c /var/etc/msd_lite.conf
+    procd_set_param respawn
+    procd_set_param stderr 1
+    procd_close_instance
 }
 
 reload_service() {
-	stop
-	start
+    stop
+    start
 }
 
 service_triggers() {
-	procd_add_reload_trigger "msd_lite"
+    procd_add_reload_trigger "msd_lite"
 }
 INITEOF
-
 chmod +x files/etc/init.d/msd_lite
 echo ">>> [9-2] msd_lite 双后端 init.d 写入完成"
 
-
 # ════════════════════════════════════════════
-#  设备专属设置
+# 设备专属设置
 # ════════════════════════════════════════════
 
 case "$DEVICE" in
 
-  # ──────────────────────────────────────────
-  #  WH3000 / WH3000 Pro（MT7981 ARM Filogic）
-  # ──────────────────────────────────────────
-  wh3000|wh3000pro)
+# ──────────────────────────────────────────
+# WH3000 / WH3000 Pro（MT7981 ARM Filogic）
+# ──────────────────────────────────────────
+wh3000|wh3000pro)
     echo ">>> 应用 WH3000/WH3000 Pro 专属配置..."
 
     # 4. WiFi 预配置（MT7981 Filogic 专用路径）
@@ -258,16 +250,14 @@ EOF
 
     # Banner
     cat > files/etc/banner << 'EOF'
+ ____   ___  _ _  ____ _____ _      ___
+|  _ \ / _ \| \ | |/ ___|__ / / \  |_ _|
+| | | | | | | \| | |  _ / / / _ \  | |
+| |_| | |_| | |\ | |_| |/ /__/ ___ \ | |
+|____/ \___/|_| \_|\____/____/_/ \_\___|
 
- ____   ___  _   _  ____ _____    _    ___ 
-|  _ \ / _ \| \ | |/ ___|__  /  / \  |_ _|
-| | | | | | |  \| | |  _ / /  / _ \  | | 
-| |_| | |_| | |\  | |_| |/ /__/ ___ \ | | 
-|____/ \___/|_| \_|\____/____/_/   \_\___|
-
-    DONGZAI 固件工厂 · Huasifei WH3000 Pro
-    Platform: MediaTek MT7981 · ARM · 512MB
-
+DONGZAI 固件工厂 · Huasifei WH3000 Pro
+Platform: MediaTek MT7981 · ARM · 512MB
 EOF
 
     echo "========================================"
@@ -279,14 +269,14 @@ EOF
     echo "========================================"
     ;;
 
-  # ──────────────────────────────────────────
-  #  RE-SP-01B（MT7621 MIPS · 512MB RAM）
-  #  WiFi: MT7603E(PCIe0) + 5G(PCIe1)
-  #  启动日志确认路径：
-  #    2.4G: pci0000:01/0000:01:00.0 [14c3:7603]
-  #    5G:   pci0000:02/0000:02:00.0
-  # ──────────────────────────────────────────
-  re-sp-01b)
+# ──────────────────────────────────────────
+# RE-SP-01B（MT7621 MIPS · 512MB RAM）
+# WiFi: MT7603E(PCIe0) + 5G(PCIe1)
+# 启动日志确认路径：
+# 2.4G: pci0000:01/0000:01:00.0 [14c3:7603]
+# 5G:   pci0000:02/0000:02:00.0
+# ──────────────────────────────────────────
+re-sp-01b)
     echo ">>> 应用 RE-SP-01B 专属配置..."
 
     # 4. WiFi 预配置（MT7621 PCI 路径）
@@ -339,25 +329,22 @@ EOF
     chmod +x files/etc/rc.local
     echo ">>> [5] WiFi 首启修复完成（rc.local 延迟启动）"
 
-    
     # Banner
     cat > files/etc/banner << 'EOF'
+ ____   ___  _ _  ____ _____ _      ___
+|  _ \ / _ \| \ | |/ ___|__ / / \  |_ _|
+| | | | | | | \| | |  _ / / / _ \  | |
+| |_| | |_| | |\ | |_| |/ /__/ ___ \ | |
+|____/ \___/|_| \_|\____/____/_/ \_\___|
 
- ____   ___  _   _  ____ _____    _    ___ 
-|  _ \ / _ \| \ | |/ ___|__  /  / \  |_ _|
-| | | | | | |  \| | |  _ / /  / _ \  | | 
-| |_| | |_| | |\  | |_| |/ /__/ ___ \ | | 
-|____/ \___/|_| \_|\____/____/_/   \_\___|
-
-    DONGZAI 固件工厂 · JDCloud RE-SP-01B
-    Platform: MediaTek MT7621 · MIPS · 512MB
-
+DONGZAI 固件工厂 · JDCloud RE-SP-01B
+Platform: MediaTek MT7621 · MIPS · 512MB
 EOF
 
     echo "========================================"
     echo " RE-SP-01B 配置完成"
     echo " 主机名    : RE-SP-01B"
-    echo " WiFi 2.4G : RE-SP-01B    (开放，刷机后设密码)"
+    echo " WiFi 2.4G : RE-SP-01B (开放，刷机后设密码)"
     echo " WiFi 5G   : RE-SP-01B_5G (开放，刷机后设密码)"
     echo " Docker    : /mnt/mmcblk0p1/docker"
     echo " 注意      : eMMC 分区号如有误，在 LuCI 挂载点调整"
