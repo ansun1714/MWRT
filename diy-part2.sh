@@ -271,10 +271,6 @@ EOF
 
 # ──────────────────────────────────────────
 # RE-SP-01B（MT7621 MIPS · 512MB RAM）
-# WiFi: MT7603E(PCIe0) + 5G(PCIe1)
-# 启动日志确认路径：
-# 2.4G: pci0000:01/0000:01:00.0 [14c3:7603]
-# 5G:   pci0000:02/0000:02:00.0
 # ──────────────────────────────────────────
 re-sp-01b)
     echo ">>> 应用 RE-SP-01B 专属配置..."
@@ -316,18 +312,13 @@ EOF
     echo ">>> [4] RE-SP-01B WiFi 预配置完成"
 
     # 5. WiFi 首启修复
-    # 根因：MT7621 上 uci-defaults 运行时 WiFi 驱动尚未完全初始化
-    # 修法：通过 rc.local 在所有服务就绪后延迟执行 wifi up
-    # （移除 uci-defaults 方式，改用 rc.local 更可靠）
     cat > files/etc/rc.local << 'EOF'
 #!/bin/sh
-# RE-SP-01B WiFi 首启修复
-# MT7621 首次启动时驱动初始化较慢，延迟 8 秒确保 wifi up 时驱动已就绪
 sleep 8 && wifi up >/dev/null 2>&1
 exit 0
 EOF
     chmod +x files/etc/rc.local
-    echo ">>> [5] WiFi 首启修复完成（rc.local 延迟启动）"
+    echo ">>> [5] WiFi 首启修复完成"
 
     # Banner
     cat > files/etc/banner << 'EOF'
@@ -344,95 +335,128 @@ EOF
     echo "========================================"
     echo " RE-SP-01B 配置完成"
     echo " 主机名    : RE-SP-01B"
-    echo " WiFi 2.4G : RE-SP-01B (开放，刷机后设密码)"
-    echo " WiFi 5G   : RE-SP-01B_5G (开放，刷机后设密码)"
-    echo " Docker    : /mnt/mmcblk0p1/docker"
-    echo " 注意      : eMMC 分区号如有误，在 LuCI 挂载点调整"
+    echo " WiFi 2.4G : RE-SP-01B"
+    echo " WiFi 5G   : RE-SP-01B_5G"
     echo "========================================"
     ;;
 
 esac
 
 # ════════════════════════════════════════════
-#  【终极修复】使用 Python 直接修改内核 QMI 驱动源码
-#  完美解决 Linux 6.18 下 hrtimer_init 被移除的错误
+# 【修复】QMI WWAN 驱动 Linux 6.17+ 内核兼容
+#
+# 根因：Linux 6.17 彻底移除了 hrtimer_init()，改用 hrtimer_setup()
+#   旧写法（Fibocom 顺序）：.function=cb → hrtimer_init(timer,clock,mode)
+#   旧写法（Quectel 顺序）：hrtimer_init(timer,clock,mode) → .function=cb
+#   新写法（统一）        ：hrtimer_setup(timer,cb,clock,mode)
+#
+# 为何之前的脚本无效：
+#   1. 路径写死了 /src/ 子目录，而源文件实际在包目录根层
+#   2. 正则试图同时匹配两行，但两驱动的顺序相反导致匹配失败
+#
+# 本版本修复策略：
+#   - os.walk 动态搜索（不依赖路径假设）
+#   - 两步分离：先替换 hrtimer_init，再删 .function= 行（顺序无关）
+#   - 搜索范围：feeds/ 目录（原始文件，symlink 前的真实位置）
 # ════════════════════════════════════════════
 
-echo ">>> [10] 注入 Python 自动修复脚本（适配 Linux 6.18 内核 API）..."
+echo ">>> [10] QMI WWAN 驱动内核兼容修复..."
 
-# 生成 Python 修复脚本（无需额外安装依赖，GitHub Actions 自带 Python3）
-cat > fix_qmi_wwan.py << 'PYTHON_EOF'
-import os
-import re
+python3 << 'PYEOF'
+import os, re
 
-# 1. 修复 hrtimer_init 替换为 hrtimer_setup (Linux 6.17+ 必需)
-# 原代码：hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\npriv->agg_hrtimer.function = callback;
-# 替换为：hrtimer_setup(&priv->agg_hrtimer, callback, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-pattern_hrtimer = re.compile(
-    r'hrtimer_init\(\s*&([^,]+),\s*([^,]+),\s*([^)]+)\);\s*([a-zA-Z_][a-zA-Z0-9_]*)->([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^;]+);',
-    re.DOTALL
-)
+TARGET = {'qmi_wwan_f.c', 'qmi_wwan_q.c'}
+SKIP   = {'.git', 'patches'}
+seen   = set()
 
-def replace_hrtimer(match):
-    timer_var = match.group(1)      # priv->agg_hrtimer
-    clock = match.group(2)          # CLOCK_MONOTONIC
-    mode = match.group(3)           # HRTIMER_MODE_REL
-    timer_struct = match.group(4)   # priv
-    func_field = match.group(5)     # agg_hrtimer
-    callback = match.group(6)       # rmnet_usb_tx_agg_timer_cb
-    # 合并成新 API
-    return f"hrtimer_setup(&{timer_var}, {callback}, {clock}, {mode});"
+def fix(path):
+    fname = os.path.basename(path)
+    try:
+        src = open(path, encoding='utf-8', errors='replace').read()
+    except OSError as e:
+        print(f'  [ERR] 读取失败: {e}'); return
 
-# 2. 修复 qma_setting_store 缺少 static 声明
-pattern_static = re.compile(
-    r'^int\s+qma_setting_store\s*\(struct\s+device\s*\*dev,\s*QMAP_SETTING\s*\*qmap_settings,\s*size_t\s+size\)\s*\{',
-    re.MULTILINE
-)
+    if 'hrtimer_init' not in src:
+        print(f'  [OK]  无需修复（已无 hrtimer_init）'); return
 
-def replace_static(match):
-    return "static int qma_setting_store(struct device *dev, QMAP_SETTING *qmap_settings, size_t size) {"
+    # 提取回调函数名（不假设它在 hrtimer_init 之前还是之后）
+    m = re.search(r'agg_hrtimer\.function\s*=\s*(\w+)\s*;', src)
+    if not m:
+        print(f'  [WARN] 找不到 agg_hrtimer.function 赋值，跳过'); return
+    cb = m.group(1)
+    print(f'  回调函数: {cb}')
 
-# 目标文件列表
-target_files = [
-    "package/wwan/driver/fibocom_QMI_WWAN/src/qmi_wwan_f.c",
-    "package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_f.c",
-    "package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_q.c"
-]
+    orig = src
 
-for file_path in target_files:
-    if not os.path.exists(file_path):
-        continue
+    # 步骤1：替换 hrtimer_init → hrtimer_setup
+    src, n1 = re.subn(
+        r'hrtimer_init\s*\(\s*&\s*priv\s*->\s*agg_hrtimer\s*,'
+        r'\s*CLOCK_MONOTONIC\s*,\s*HRTIMER_MODE_REL\s*\)\s*;',
+        f'hrtimer_setup(&priv->agg_hrtimer, {cb}, CLOCK_MONOTONIC, HRTIMER_MODE_REL);',
+        src
+    )
+    print(f'  hrtimer_init 替换: {n1} 处')
 
-    with open(file_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    # 步骤2：删除现在多余的 .function = cb 那整行
+    src, n2 = re.subn(
+        r'[ \t]*priv\s*->\s*agg_hrtimer\.function\s*=\s*'
+        + re.escape(cb) + r'\s*;\n',
+        '',
+        src
+    )
+    print(f'  .function 赋值行删除: {n2} 行')
 
-    modified = False
+    # 步骤3：qma_setting_store 缺前置声明 → 加 static（仅 qmi_wwan_f.c）
+    if fname == 'qmi_wwan_f.c':
+        src, n3 = re.subn(
+            r'^int\s+qma_setting_store\s*\(',
+            'static int qma_setting_store(',
+            src, flags=re.MULTILINE
+        )
+        if n3: print(f'  qma_setting_store → static: {n3} 处')
 
-    # 执行替换 1
-    new_content, count1 = pattern_hrtimer.subn(replace_hrtimer, content)
-    if count1 > 0:
-        modified = True
+    if src == orig:
+        print(f'  [WARN] 内容无变化，可能正则未命中，请检查源文件格式')
+        return
 
-    # 执行替换 2
-    new_content, count2 = pattern_static.subn(replace_static, new_content)
-    if count2 > 0:
-        modified = True
+    open(path, 'w', encoding='utf-8').write(src)
+    print(f'  ✓ 修复完成')
 
-    if modified:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        print(f"✓ 成功修复: {file_path} (替换 hrtimer: {count1} 处, 添加 static: {count2} 处)")
-    else:
-        print(f"- 未发现需要修复的代码: {file_path} (可能已适配)")
-PYTHON_EOF
+# 打印工作目录方便排查
+print(f'CWD: {os.getcwd()}')
 
-# 执行修复脚本
-echo ">>> 正在运行 Python 适配脚本..."
-python3 fix_qmi_wwan.py
-rm fix_qmi_wwan.py
+# 从 feeds/ 目录搜索（原始文件位置，不依赖 symlink 结构）
+if not os.path.isdir('feeds'):
+    print('[CRITICAL] feeds/ 目录不存在！请确认在 feeds update/install 之后运行本脚本。')
+else:
+    for root, dirs, files in os.walk('feeds', followlinks=True):
+        dirs[:] = [d for d in dirs if d not in SKIP]
+        for fname in files:
+            if fname not in TARGET:
+                continue
+            path = os.path.join(root, fname)
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            seen.add(real)
+            print(f'\n[文件] {path}')
+            fix(path)
 
-echo ">>> [10] 源码修复完毕！"
+    if not seen:
+        print('\n[CRITICAL] feeds/ 中未找到任何目标文件！')
+        print('目录结构预览（用于诊断）:')
+        for root, dirs, files in os.walk('feeds', followlinks=True):
+            dirs[:] = [d for d in dirs if d not in SKIP]
+            depth = root.count(os.sep)
+            if depth > 5: continue
+            print(f'  {"  " * depth}{os.path.basename(root)}/')
+            for f in files:
+                print(f'  {"  " * (depth+1)}{f}')
+PYEOF
+
+echo ">>> [10] 修复脚本执行完毕"
 
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
 echo "========================================"
+
