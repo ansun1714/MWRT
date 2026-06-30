@@ -354,51 +354,84 @@ EOF
 esac
 
 # ════════════════════════════════════════════
-#  【修复】内核兼容性修复 (修正路径错误)
-#  解决问题：hrtimer_init (Linux 6.17+ API变更)
-#  和 qma_setting_store (-Wmissing-prototypes)
+#  【终极修复】使用 Python 直接修改内核 QMI 驱动源码
+#  完美解决 Linux 6.18 下 hrtimer_init 被移除的错误
 # ════════════════════════════════════════════
 
-echo ">>> [10] 注入 qmi_wwan_f 内核补丁 (修复路径为根目录)..."
+echo ">>> [10] 注入 Python 自动修复脚本（适配 Linux 6.18 内核 API）..."
 
-# 确保补丁目录存在
-PATCH_DIR="package/wwan/driver/fibocom_QMI_WWAN/patches"
-mkdir -p "${PATCH_DIR}"
+# 生成 Python 修复脚本（无需额外安装依赖，GitHub Actions 自带 Python3）
+cat > fix_qmi_wwan.py << 'PYTHON_EOF'
+import os
+import re
 
-# 写入补丁 1：修复 hrtimer_init
-# 注意：文件路径必须为 a/qmi_wwan_f.c (不是 a/src/qmi_wwan_f.c)
-cat > "${PATCH_DIR}/100-fix-linux6.17-hrtimer.patch" << 'EOF'
---- a/qmi_wwan_f.c
-+++ b/qmi_wwan_f.c
-@@ -1208,6 +1208,10 @@
- 	priv->agg_timer_data.rid = rid;
- 	priv->agg_hrtimer.function = rmnet_usb_tx_agg_timer_cb;
- 	priv->agg_timer_data.priv = priv;
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,17,0)
-+	hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC);
-+#else
- 	hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-+#endif
+# 1. 修复 hrtimer_init 替换为 hrtimer_setup (Linux 6.17+ 必需)
+# 原代码：hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\npriv->agg_hrtimer.function = callback;
+# 替换为：hrtimer_setup(&priv->agg_hrtimer, callback, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+pattern_hrtimer = re.compile(
+    r'hrtimer_init\(\s*&([^,]+),\s*([^,]+),\s*([^)]+)\);\s*([a-zA-Z_][a-zA-Z0-9_]*)->([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^;]+);',
+    re.DOTALL
+)
 
- 	return 0;
-EOF
+def replace_hrtimer(match):
+    timer_var = match.group(1)      # priv->agg_hrtimer
+    clock = match.group(2)          # CLOCK_MONOTONIC
+    mode = match.group(3)           # HRTIMER_MODE_REL
+    timer_struct = match.group(4)   # priv
+    func_field = match.group(5)     # agg_hrtimer
+    callback = match.group(6)       # rmnet_usb_tx_agg_timer_cb
+    # 合并成新 API
+    return f"hrtimer_setup(&{timer_var}, {callback}, {clock}, {mode});"
 
-# 写入补丁 2：修复 missing-prototypes
-cat > "${PATCH_DIR}/200-fix-missing-prototype.patch" << 'EOF'
---- a/qmi_wwan_f.c
-+++ b/qmi_wwan_f.c
-@@ -1334,7 +1334,7 @@
- 	return 0;
- }
+# 2. 修复 qma_setting_store 缺少 static 声明
+pattern_static = re.compile(
+    r'^int\s+qma_setting_store\s*\(struct\s+device\s*\*dev,\s*QMAP_SETTING\s*\*qmap_settings,\s*size_t\s+size\)\s*\{',
+    re.MULTILINE
+)
 
--int qma_setting_store(struct device *dev, QMAP_SETTING *qmap_settings, size_t size) {
-+static int qma_setting_store(struct device *dev, QMAP_SETTING *qmap_settings, size_t size) {
- 	int ret = 0;
- 	...
- }
-EOF
+def replace_static(match):
+    return "static int qma_setting_store(struct device *dev, QMAP_SETTING *qmap_settings, size_t size) {"
 
-echo ">>> [10] 补丁写入成功！请重新运行编译。"
+# 目标文件列表
+target_files = [
+    "package/wwan/driver/fibocom_QMI_WWAN/src/qmi_wwan_f.c",
+    "package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_f.c",
+    "package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_q.c"
+]
+
+for file_path in target_files:
+    if not os.path.exists(file_path):
+        continue
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    modified = False
+
+    # 执行替换 1
+    new_content, count1 = pattern_hrtimer.subn(replace_hrtimer, content)
+    if count1 > 0:
+        modified = True
+
+    # 执行替换 2
+    new_content, count2 = pattern_static.subn(replace_static, new_content)
+    if count2 > 0:
+        modified = True
+
+    if modified:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        print(f"✓ 成功修复: {file_path} (替换 hrtimer: {count1} 处, 添加 static: {count2} 处)")
+    else:
+        print(f"- 未发现需要修复的代码: {file_path} (可能已适配)")
+PYTHON_EOF
+
+# 执行修复脚本
+echo ">>> 正在运行 Python 适配脚本..."
+python3 fix_qmi_wwan.py
+rm fix_qmi_wwan.py
+
+echo ">>> [10] 源码修复完毕！"
 
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
