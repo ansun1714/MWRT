@@ -38,67 +38,128 @@ git clone --depth=1 \
 cp -r /tmp/OpenClash/luci-app-openclash package/
 rm -rf /tmp/OpenClash
 
-# ─── 内核 6.17+ QMI WWAN 驱动兼容修复 ──────────────────────────────────
+# ─── QMI WWAN 驱动内核版本兼容修复 ──────────────────────
 #
-# 背景：Linux 6.17 删除了 hrtimer_init()，改用 hrtimer_setup()
-#   旧：hrtimer_init(&timer, clock, mode); timer.function = cb;
-#   新：hrtimer_setup(&timer, cb, clock, mode);
+# 问题：fibocom_QMI_WWAN / quectel_QMI_WWAN 是 lede 内置包，
+#       源文件在 package/wwan/driver/XXX/src/ 下，
+#       同一份 C 代码会被不同内核版本编译：
+#         WH3000/Pro → Linux 6.18（hrtimer_init 已删除，必须用 hrtimer_setup）
+#         RE-SP-01B  → Linux 5.10（hrtimer_setup 尚未存在，必须用 hrtimer_init）
 #
-# fibocom_QMI_WWAN / quectel_QMI_WWAN 是 lede 内置包（非外部 feed），
-# 源文件在 package/wwan/driver/XXX/src/ 下，diy-part1.sh 运行时已存在。
-# 路径确定，无需搜索，直接 sed 修复。
+# 修复方案：用 #if LINUX_VERSION_CODE 条件编译，让同一份源码同时兼容两个内核
+#   >= 6.17：hrtimer_setup(&timer, cb, clock, mode)  ← 一步完成
+#   <  6.17：hrtimer_init(&timer, clock, mode)        ← 分两步，保留 .function=cb 行
 #
-# 同修：qma_setting_store 缺 static 声明（-Werror=missing-prototypes）
+# 同修：qma_setting_store 缺 static 前置声明（-Werror=missing-prototypes）
 
-echo ">>> 修复 QMI WWAN 驱动内核 6.17+ 兼容性..."
+echo ">>> 修复 QMI WWAN 驱动多内核兼容性..."
 
-for SRCDIR in \
-    "package/wwan/driver/fibocom_QMI_WWAN/src" \
-    "package/wwan/driver/quectel_QMI_WWAN/src"
-do
-    if [ ! -d "$SRCDIR" ]; then
-        echo "  [跳过] 目录不存在: $SRCDIR"
-        continue
-    fi
+python3 << 'PYEOF'
+import re, os, sys
 
-    for F in "${SRCDIR}/qmi_wwan_f.c" "${SRCDIR}/qmi_wwan_q.c"; do
-        [ -f "$F" ] || continue
+TARGET_FILES = [
+    'package/wwan/driver/fibocom_QMI_WWAN/src/qmi_wwan_f.c',
+    'package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_f.c',
+    'package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_q.c',
+]
 
-        if ! grep -q 'hrtimer_init' "$F"; then
-            echo "  [OK]   已无需修复: $F"
-            continue
-        fi
+def fix(fpath):
+    fname = os.path.basename(fpath)
+    if not os.path.exists(fpath):
+        print(f'  [SKIP] 不存在: {fpath}')
+        return
 
-        # 提取回调函数名（不硬编码，自动适配将来版本）
-        CB=$(grep -m1 'agg_hrtimer\.function' "$F" \
-             | sed 's/.*=[[:space:]]*//;s/[[:space:]]*;//')
+    src = open(fpath, encoding='utf-8', errors='replace').read()
+    orig = src
 
-        if [ -z "$CB" ]; then
-            echo "  [WARN] 找不到回调函数名，跳过: $F"
-            continue
-        fi
+    # 已修复过（含版本条件），幂等跳过
+    if 'KERNEL_VERSION(6, 17, 0)' in src:
+        print(f'  [OK]   已含版本条件，无需重复修复: {fname}')
+        return
 
-        # 步骤1：hrtimer_init → hrtimer_setup（将回调作为第2参数）
-        sed -i \
-"s/hrtimer_init(\&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL)/hrtimer_setup(\&priv->agg_hrtimer, ${CB}, CLOCK_MONOTONIC, HRTIMER_MODE_REL)/g" \
-            "$F"
+    # 必须含 hrtimer_init 才需要处理
+    if 'hrtimer_init' not in src:
+        print(f'  [OK]   无 hrtimer_init，无需修复: {fname}')
+        return
 
-        # 步骤2：删除现在多余的 .function = cb 赋值整行
-        sed -i "/agg_hrtimer\.function[[:space:]]*=/d" "$F"
+    # 提取回调函数名（不硬编码，兼容将来版本更新）
+    m = re.search(r'agg_hrtimer\.function\s*=\s*(\w+)\s*;', src)
+    if not m:
+        print(f'  [WARN] 找不到 .function= 赋值，跳过: {fname}')
+        return
+    cb = m.group(1)
+    print(f'  callback={cb}')
 
-        # 步骤3：qma_setting_store 加 static（仅 qmi_wwan_f.c）
-        case "$(basename "$F")" in
-            qmi_wwan_f.c)
-                sed -i 's/^int qma_setting_store(/static int qma_setting_store(/' "$F" \
-                    2>/dev/null || true
-                ;;
-        esac
+    # ── 1. 确保 linux/version.h 已引入 ─────────────────────────────────────
+    if '#include <linux/version.h>' not in src:
+        # 插入到第一个 #include 之前
+        src = re.sub(
+            r'^(#include\s)',
+            r'#include <linux/version.h>\n\1',
+            src, count=1, flags=re.MULTILINE
+        )
 
-        echo "  [FIXED] $F  callback=$CB"
-    done
-done
+    # ── 2. 把 hrtimer_init 行替换成版本条件块 ─────────────────────────────
+    #  原行（任意缩进）：
+    #    \thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    #  替换为：
+    #    \t#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+    #    \t\thrtimer_setup(&priv->agg_hrtimer, cb, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    #    \t#else
+    #    \t\thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    #    \t#endif
+    #  ──────────────────────────────────────────────────────────────────────
+    #  注意：.function=cb 行保持原位不动
+    #    ·  对 Linux < 6.17：hrtimer_init 不改变 .function，.function=cb 生效
+    #    ·  对 Linux >= 6.17：hrtimer_setup 内部已设置 .function，.function=cb
+    #       行是冗余赋值（同值覆盖），无害
 
-echo ">>> QMI WWAN 修复完成"
+    def repl(m):
+        indent = m.group(1)
+        return (
+            f'{indent}#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)\n'
+            f'{indent}\thrtimer_setup(&priv->agg_hrtimer, {cb}, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n'
+            f'{indent}#else\n'
+            f'{indent}\thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n'
+            f'{indent}#endif'
+        )
+
+    src, n = re.subn(
+        r'^([ \t]*)hrtimer_init\s*\(\s*&\s*priv\s*->\s*agg_hrtimer\s*,'
+        r'\s*CLOCK_MONOTONIC\s*,\s*HRTIMER_MODE_REL\s*\)\s*;',
+        repl,
+        src,
+        flags=re.MULTILINE
+    )
+
+    if n == 0:
+        print(f'  [WARN] hrtimer_init 行未被替换，请检查源码格式: {fname}')
+        return
+    print(f'  hrtimer 条件块替换: {n} 处')
+
+    # ── 3. qma_setting_store 缺 static（仅 qmi_wwan_f.c）──────────────────
+    if fname == 'qmi_wwan_f.c':
+        src, n3 = re.subn(
+            r'^int\s+qma_setting_store\s*\(',
+            'static int qma_setting_store(',
+            src, flags=re.MULTILINE
+        )
+        if n3:
+            print(f'  qma_setting_store → static: {n3} 处')
+
+    # ── 写回 ───────────────────────────────────────────────────────────────
+    if src != orig:
+        open(fpath, 'w', encoding='utf-8').write(src)
+        print(f'  ✓ 写入完成: {fpath}')
+    else:
+        print(f'  [WARN] 内容无变化: {fpath}')
+
+for f in TARGET_FILES:
+    print(f'\n[处理] {f}')
+    fix(f)
+
+print('\n>>> QMI WWAN 修复完成')
+PYEOF
 
 # ─── 完成 ────────────────────────────────────────────────
 
