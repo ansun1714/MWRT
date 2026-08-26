@@ -1,4 +1,4 @@
-name: 🏗️ MWRT-DONGZAI 固件编译（Linux 6.18 自动兼容）
+name: 🏗️ MWRT-DONGZAI 固件编译(显示内核)
 
 on:
   workflow_dispatch:
@@ -9,27 +9,16 @@ on:
         default: 'wh3000pro'
         type: choice
         options:
-          - wh3000
-          - wh3000pro
-          - re-sp-01b
-
-      clean_build:
-        description: '🧹 是否完全清理编译'
-        required: true
-        default: false
-        type: boolean
+          - wh3000        # 华硅 WH3000       · MT7981 ARM · 512MB
+          - wh3000pro     # 华硅 WH3000 Pro   · MT7981 ARM · 512MB
+          - re-sp-01b     # 京东云无线宝       · MT7621 MIPS · 512MB
 
 env:
   LEDE_REPO: https://github.com/coolsnowwolf/lede
   LEDE_BRANCH: master
 
-  # GitHub Actions 缓存目录
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-
 jobs:
-
   build:
-
     runs-on: ubuntu-22.04
 
     permissions:
@@ -38,16 +27,20 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. 显示编译信息
+      # 1. 固件工厂信息
       # ============================================================
       - name: 🎯 MWRT 固件工厂
-        shell: bash
         run: |
-          set -e
+          cat << 'EOF'
 
-          echo "============================================================"
-          echo "              MWRT-DONGZAI 固件工厂"
-          echo "============================================================"
+            ____   ___  _   _  ____ _____    _    ___
+           |  _ \ / _ \| \ | |/ ___|__  /  / \  |_ _|
+           | | | | | | |  \| | |  _ / /  / _ \  | |
+           | |_| | |_| | |\  | |_| |/ /__/ ___ \ | |
+           |____/ \___/|_| \_|\____/____/_/   \_\___|
+                  🏗️  固件工厂  ·  OpenWrt
+
+          EOF
 
           DEVICE="${{ github.event.inputs.device }}"
 
@@ -70,63 +63,46 @@ jobs:
               ;;
           esac
 
-          echo "📦 设备       : $DNAME"
-          echo "🔧 规格       : $DSPEC"
-          echo "🐧 内核策略   : Filogic 自动跟随 Linux 6.18.x"
-          echo "🧹 完全重编译 : ${{ github.event.inputs.clean_build }}"
-          echo "🕐 时间       : $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "🔖 Workflow   : MWRT-DONGZAI"
-          echo "============================================================"
+          echo "  ┌─────────────────────────────────────────┐"
+          echo "  │  📦 设备：$DNAME"
+          echo "  │  🔧 规格：$DSPEC"
+          echo "  │  🕐 时间：$(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "  │  🔖 标识：MWRT-DONGZAI"
+          echo "  └─────────────────────────────────────────┘"
 
 
       # ============================================================
-      # 2. 检出自己的 MWRT 仓库
+      # 2. 检出 MWRT 仓库
       # ============================================================
-      - name: 📥 检出 MWRT 仓库
+      - name: 📥 检出仓库
         uses: actions/checkout@v4
 
 
       # ============================================================
-      # 3. 释放 GitHub Runner 磁盘空间
+      # 3. 释放磁盘空间
       # ============================================================
       - name: 🧹 释放磁盘空间
-        shell: bash
         run: |
-          set -e
+          sudo rm -rf /usr/share/dotnet \
+                      /opt/ghc \
+                      /usr/local/lib/android \
+                      /opt/hostedtoolcache/CodeQL
 
-          echo ">>> 清理 GitHub Runner 无用组件..."
-
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /opt/ghc \
-            /usr/local/lib/android \
-            /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/powershell \
-            /usr/local/lib/node_modules
-
-          sudo docker image prune -a -f || true
-          sudo apt-get clean || true
+          sudo docker image prune -a -f
+          sudo apt-get clean
 
           sudo swapoff -a || true
-          sudo rm -f /swapfile || true
+          sudo rm -f /swapfile
 
-          echo
-          echo ">>> 当前磁盘空间："
+          echo "── 当前磁盘空间 ──"
           df -h
 
-          echo
-          echo ">>> 当前内存："
-          free -h
-
 
       # ============================================================
-      # 4. 安装编译环境
+      # 4. 初始化编译环境
       # ============================================================
       - name: ⚙️ 初始化编译环境
-        shell: bash
         run: |
-          set -e
-
           sudo apt-get update -q
 
           sudo apt-get install -y \
@@ -141,7 +117,6 @@ jobs:
             gettext \
             git \
             libncurses5-dev \
-            libncurses-dev \
             libssl-dev \
             python3 \
             python3-pyelftools \
@@ -160,9 +135,7 @@ jobs:
             device-tree-compiler \
             patch
 
-          echo
-          echo ">>> 工具版本："
-
+          echo "── 编译工具版本 ──"
           gcc --version | head -1
           clang --version | head -1
           python3 --version
@@ -172,136 +145,64 @@ jobs:
       # ============================================================
       # 5. 克隆 LEDE
       # ============================================================
-      - name: 📦 克隆 LEDE 源码
-        shell: bash
+      - name: 📦 克隆源码
         run: |
-          set -e
-
-          echo ">>> 克隆：$LEDE_REPO"
-          echo ">>> 分支：$LEDE_BRANCH"
-
           git clone \
             --depth=1 \
             -b "$LEDE_BRANCH" \
             "$LEDE_REPO" \
             openwrt
 
-          mkdir -p openwrt/dl
-          mkdir -p "$CCACHE_DIR"
-
-          echo
-          echo "============================================================"
-          echo "LEDE 最新提交"
-          echo "============================================================"
-
-          git -C openwrt log -1 \
-            --pretty=format:'commit: %H%nshort : %h%ndate   : %ci%nsubject: %s%n'
-
-          echo
-          echo "============================================================"
+          echo "── 源码最新提交 ──"
+          git -C openwrt log --oneline -3
 
 
       # ============================================================
-      # 6. 缓存下载文件
-      # ============================================================
-      - name: 💾 恢复 LEDE 下载缓存
-        uses: actions/cache@v4
-        with:
-          path: openwrt/dl
-          key: lede-dl-${{ runner.os }}-${{ hashFiles('openwrt/.config', 'wh3000.config', 'wh3000pro.config', 're-sp-01b.config') }}
-          restore-keys: |
-            lede-dl-${{ runner.os }}-
-
-
-      # ============================================================
-      # 7. 缓存 ccache
-      # ============================================================
-      - name: 💾 恢复 ccache 编译缓存
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ github.ref_name }}-${{ github.run_number }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ github.ref_name }}-
-            ccache-${{ runner.os }}-${{ github.event.inputs.device }}-
-            ccache-${{ runner.os }}-
-
-
-      # ============================================================
-      # 8. DIY Part 1
+      # 6. DIY Part 1
       #
-      # 这里非常关键：
-      # 负责 Feeds、MSD、OpenClash、QMI、RE-SP-01B
-      # 以及 Linux 6.18 MediaTek WED 942 补丁兼容。
+      # 这里会执行：
+      #
+      # Lucky
+      # Qmodem
+      # rtp2httpd
+      # helloworld
+      # MSD Lite
+      # IPTV Manager
+      # OpenClash
+      # RE-SP-01B 分区
+      # QMI WWAN
+      # Linux 6.18 MediaTek WED 942 修复
+      #
       # ============================================================
-      - name: 🔧 DIY Part 1 - Feeds + 内核兼容修复
-        shell: bash
+      - name: 🔧 DIY Part 1 - 配置 Feeds
         run: |
-          set -e
-
           chmod +x diy-part1.sh
 
           cd openwrt
 
-          echo "============================================================"
-          echo "开始执行 DIY Part 1"
-          echo "============================================================"
-
           ../diy-part1.sh
 
-          echo
-          echo "============================================================"
-          echo "DIY Part 1 执行完成"
-          echo "============================================================"
-
 
       # ============================================================
-      # 9. 更新 Feeds
+      # 7. 更新 & 安装 Feeds
       # ============================================================
-      - name: 🔄 更新 Feeds
-        shell: bash
+      - name: 🔄 更新 & 安装 Feeds
         run: |
-          set -e
-
           cd openwrt
-
-          echo ">>> 更新所有 Feeds..."
 
           ./scripts/feeds update -a
 
-          echo ">>> Feeds 更新完成"
-
-
-      # ============================================================
-      # 10. 安装 Feeds
-      # ============================================================
-      - name: 📦 安装 Feeds
-        shell: bash
-        run: |
-          set -e
-
-          cd openwrt
-
-          echo ">>> 安装所有 Feeds..."
-
           ./scripts/feeds install -a
 
-          echo ">>> Feeds 安装完成"
-
 
       # ============================================================
-      # 11. 加载设备配置
+      # 8. 加载设备配置
       # ============================================================
       - name: 🎛️ 加载设备配置
-        shell: bash
         run: |
-          set -e
-
           DEVICE="${{ github.event.inputs.device }}"
 
-          echo "============================================================"
-          echo "加载设备配置：$DEVICE"
-          echo "============================================================"
+          echo "── 加载配置：${DEVICE}.config ──"
 
           case "$DEVICE" in
 
@@ -324,86 +225,83 @@ jobs:
 
           esac
 
-          # --------------------------------------------------------
-          # RE-SP-01B 强制修正 TARGET
-          # --------------------------------------------------------
+
+          # ========================================================
+          # RE-SP-01B TARGET 修正
+          # ========================================================
+
           if [ "$DEVICE" = "re-sp-01b" ]; then
 
-            grep -v "CONFIG_TARGET_.*_DEVICE_" \
-              openwrt/.config \
+            grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config \
               > /tmp/.config_patched
 
             echo \
               "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" \
               >> /tmp/.config_patched
 
-            mv /tmp/.config_patched openwrt/.config
+            cp /tmp/.config_patched openwrt/.config
 
-            echo "✅ RE-SP-01B TARGET 已修正"
+            echo "✅ RE-SP-01B 设备目标已修正"
+
+          else
+
+            echo "✅ ${DEVICE}：直接使用 config 文件中的设备配置"
 
           fi
 
-          echo
-          echo ">>> 当前 TARGET："
 
-          grep "CONFIG_TARGET_" openwrt/.config \
-            | grep -v "^#" \
-            | head -20 || true
+          echo "── 当前设备目标 ──"
+
+          grep "DEVICE_" openwrt/.config \
+            | grep -v "^#" || true
 
 
       # ============================================================
-      # 12. 配置内核
+      # 9. 配置内核
       #
       # WH3000 / WH3000 Pro：
-      # 自动跟随 LEDE 当前 Linux 6.18.x testing kernel
+      #     CONFIG_TESTING_KERNEL=y
+      #
+      # 自动跟随 LEDE 最新 Linux 6.18 testing kernel
       #
       # RE-SP-01B：
-      # 不使用 testing kernel
+      #     禁用 testing kernel
+      #     使用稳定内核
+      #
       # ============================================================
       - name: 🐧 配置内核版本
-        shell: bash
         run: |
-          set -e
-
           DEVICE="${{ github.event.inputs.device }}"
 
           case "$DEVICE" in
 
             wh3000|wh3000pro)
 
-              echo "============================================================"
-              echo "Filogic / MT7981"
-              echo "启用最新 Testing Kernel"
-              echo "============================================================"
-
+              # 防止重复配置
               sed -i '/CONFIG_TESTING_KERNEL=/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_6=/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_12=/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_18=/d' openwrt/.config
 
-              echo "CONFIG_TESTING_KERNEL=y" \
+              printf 'CONFIG_TESTING_KERNEL=y\n' \
                 >> openwrt/.config
 
-              echo "✅ CONFIG_TESTING_KERNEL=y"
+              echo "✅ Filogic ARM：已启用最新测试内核"
 
               ;;
 
-            re-sp-01b)
 
-              echo "============================================================"
-              echo "MT7621 / RE-SP-01B"
-              echo "使用稳定内核"
-              echo "============================================================"
+            re-sp-01b)
 
               sed -i '/CONFIG_TESTING_KERNEL=/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_6=/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_12=/d' openwrt/.config
               sed -i '/CONFIG_LINUX_6_18=/d' openwrt/.config
 
-              echo "# CONFIG_TESTING_KERNEL is not set" \
+              printf '# CONFIG_TESTING_KERNEL is not set\n' \
                 >> openwrt/.config
 
-              echo "⏭️ 使用稳定内核"
+              echo "⏭️ MT7621 MIPS：使用稳定内核（5.x）"
 
               ;;
 
@@ -411,13 +309,10 @@ jobs:
 
 
       # ============================================================
-      # 13. DIY Part 2
+      # 10. DIY Part 2
       # ============================================================
       - name: 🔧 DIY Part 2 - 文件定制
-        shell: bash
         run: |
-          set -e
-
           chmod +x diy-part2.sh
 
           cd openwrt
@@ -428,153 +323,94 @@ jobs:
 
 
       # ============================================================
-      # 14. 配置 ccache
-      # ============================================================
-      - name: ⚡ 配置 ccache
-        shell: bash
-        run: |
-          set -e
-
-          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache"
-
-          mkdir -p "$CCACHE_DIR"
-
-          ccache --set-config=max_size=3G
-          ccache --set-config=compression=true
-
-          echo ">>> ccache 目录：$CCACHE_DIR"
-
-          ccache -s || true
-
-
-      # ============================================================
-      # 15. make defconfig
+      # 11. 生成最终配置
       # ============================================================
       - name: 📋 生成最终配置
-        shell: bash
         run: |
-          set -e
-
           cd openwrt
-
-          echo "============================================================"
-          echo "执行 make defconfig"
-          echo "============================================================"
 
           make defconfig
 
-          echo
-          echo "============================================================"
-          echo "TARGET"
-          echo "============================================================"
+          echo "── TARGET 配置 ──"
 
           grep "CONFIG_TARGET_" .config \
-            | grep -v "^#" \
-            | head -20 || true
+            | head -10 || true
 
-          echo
-          echo "============================================================"
-          echo "Kernel"
-          echo "============================================================"
+          echo "── 内核版本 ──"
 
           grep -E \
-            "CONFIG_LINUX_|CONFIG_TESTING_KERNEL" \
+            "LINUX_6|LINUX_5|TESTING_KERNEL" \
             .config \
-            | head -20 || true
-
-          echo
-          echo "============================================================"
-          echo "ccache"
-          echo "============================================================"
-
-          ccache -s || true
+            | head -10 || true
 
 
       # ============================================================
-      # 16. 下载依赖
+      # 12. 下载编译依赖
       # ============================================================
       - name: ⬇️ 下载编译依赖
-        shell: bash
         run: |
-          set -e
-
           cd openwrt
-
-          echo "============================================================"
-          echo "下载编译依赖"
-          echo "============================================================"
 
           make download -j8
 
-          echo
-          echo ">>> 检查异常下载文件..."
+          echo "── 检查异常下载文件 ──"
 
           find dl \
             -size -1024c \
-            -type f \
-            -print \
+            -exec ls -l {} \; \
             2>/dev/null || true
-
-          echo
-          echo ">>> 下载目录大小："
-
-          du -sh dl || true
 
 
       # ============================================================
-      # 17. 编译固件
+      # 13. 编译固件
       #
-      # 关键修复：
-      # 不再使用：
+      # 这里是本次 Workflow 的重要修复。
       #
-      # make ... | tee ... | grep ... || true
+      # 原来的：
       #
-      # 避免 PIPESTATUS 判断错误。
+      # make | tee | grep || true
+      #
+      # 会干扰真正的 make 返回值。
+      #
+      # 现在：
+      #
+      # set -o pipefail
+      #
+      # 确保 make 真失败时，GitHub Actions 正确失败。
+      #
       # ============================================================
       - name: 🔨 编译固件
         id: compile
-        shell: bash
         run: |
-          set -o pipefail
-
           cd openwrt
 
-          CORES="$(nproc)"
+          echo "── 开始编译，CPU 核心：$(nproc) ──"
 
-          echo "============================================================"
-          echo "开始编译 MWRT"
-          echo "CPU 核心：$CORES"
-          echo "============================================================"
+          set -o pipefail
 
-          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache"
+          if make -j$(nproc) V=s 2>&1 | tee /tmp/build.log; then
 
-          START_TIME="$(date +%s)"
-
-          if make -j"$CORES" V=s 2>&1 | tee /tmp/build.log; then
-
-            END_TIME="$(date +%s)"
-            ELAPSED="$((END_TIME - START_TIME))"
-
-            echo
-            echo "============================================================"
-            echo "✅ 并行编译成功"
-            echo "编译耗时：${ELAPSED} 秒"
-            echo "============================================================"
+            echo "✅ 并行编译完成"
 
           else
 
-            echo
+            echo ""
             echo "============================================================"
             echo "❌ 并行编译失败"
             echo "============================================================"
 
-            echo
-            echo ">>> 最后 250 行错误日志："
-            tail -250 /tmp/build.log || true
+            echo ""
+            echo "── 最后 200 行错误日志 ──"
 
-            echo
-            echo ">>> ccache 状态："
-            ccache -s || true
+            tail -200 /tmp/build.log || true
+
+            echo ""
+            echo "── 编译失败位置搜索 ──"
+
+            grep -E \
+              "Hunk .*FAILED|ERROR:|error:|Error |FAILED|failed" \
+              /tmp/build.log \
+              | tail -100 || true
 
             exit 1
 
@@ -582,7 +418,17 @@ jobs:
 
 
       # ============================================================
-      # 18. 上传失败日志
+      # 14. 编译失败上传日志
+      #
+      # 如果以后再出现：
+      #
+      # Hunk FAILED
+      # kernel error
+      # package error
+      # DTS error
+      #
+      # 可以直接下载完整日志。
+      #
       # ============================================================
       - name: 📋 上传失败编译日志
         if: failure()
@@ -597,74 +443,84 @@ jobs:
 
 
       # ============================================================
-      # 19. 获取完整 Linux 内核版本
+      # 15. 获取完整内核版本
       # ============================================================
       - name: 🔍 获取完整内核版本
         id: kernel
-        shell: bash
         run: |
-          set -e
-
           cd openwrt
 
-          KERNEL=""
+          # ========================================================
+          # 策略 1：
+          # make kernelversion
+          # ========================================================
 
-          # --------------------------------------------------------
-          # 方法 1：make kernelversion
-          # --------------------------------------------------------
-          KERNEL="$(
+          KERNEL=$(
             make kernelversion 2>/dev/null \
             | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
             | head -1 \
-            || true
-          )"
+            || echo ""
+          )
 
-          # --------------------------------------------------------
-          # 方法 2：搜索 build_dir
-          # --------------------------------------------------------
+
+          # ========================================================
+          # 策略 2：
+          # 搜索 build_dir
+          # ========================================================
+
           if [ -z "$KERNEL" ]; then
 
             echo "⚠️ make kernelversion 未获取到版本"
 
-            KERNEL="$(
+            KERNEL=$(
               find build_dir \
                 -type d \
-                -name 'linux-*' \
+                -name "linux-*" \
                 2>/dev/null \
-              | sed 's#^.*/linux-##' \
-              | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' \
-              | sort -V \
-              | tail -1 \
-              || true
+                | sed 's#^.*/linux-##' \
+                | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' \
+                | sort -V \
+                | tail -1 \
+                || echo ""
             )
 
           fi
 
-          # --------------------------------------------------------
-          # 方法 3：从 .config 获取
-          # --------------------------------------------------------
+
+          # ========================================================
+          # 策略 3：
+          # 从 .config 获取
+          # ========================================================
+
           if [ -z "$KERNEL" ]; then
 
-            echo "⚠️ build_dir 未找到完整版本"
+            echo "⚠️ 未找到完整版本，从 .config 获取大版本"
 
-            MAJOR_MINOR="$(
-              grep '^CONFIG_LINUX_[0-9_]*=y' .config \
+            MAJOR_MINOR=$(
+              grep "^CONFIG_LINUX_[0-9_]*=y" .config \
               | head -1 \
               | sed 's/CONFIG_LINUX_//' \
               | sed 's/=y//' \
               | tr '_' '.'
-            )"
+            )
 
             if [ -n "$MAJOR_MINOR" ]; then
+
               KERNEL="${MAJOR_MINOR}.*"
+
             else
+
               KERNEL="Unknown"
+
             fi
 
           fi
 
-          COMMIT="$(git rev-parse --short HEAD)"
-          BUILD_TIME="$(date '+%Y-%m-%d %H:%M UTC')"
+
+          COMMIT=$(git rev-parse --short HEAD)
+
+          BUILD_TIME=$(date '+%Y-%m-%d %H:%M UTC')
+
 
           echo "kernel=$KERNEL" \
             >> "$GITHUB_OUTPUT"
@@ -675,52 +531,57 @@ jobs:
           echo "build_time=$BUILD_TIME" \
             >> "$GITHUB_OUTPUT"
 
-          echo
-          echo "============================================================"
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
           echo "完整内核版本 : $KERNEL"
-          echo "LEDE Commit  : $COMMIT"
+          echo "MWRT Commit  : $COMMIT"
           echo "编译时间     : $BUILD_TIME"
-          echo "============================================================"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 
       # ============================================================
-      # 20. 整理固件
+      # 16. 整理固件
       # ============================================================
       - name: 📁 整理固件
-        shell: bash
+        id: organize
         run: |
-          set -e
-
           mkdir -p upload
 
-          echo ">>> 搜索固件..."
+          # ========================================================
+          # 搜索固件
+          # ========================================================
 
           find openwrt/bin/targets/ \
             -type f \
             \( \
               -name "*.bin" \
-              -o -name "*.img" \
               -o -name "*.img.gz" \
               -o -name "*.itb" \
               -o -name "*.tar" \
             \) \
             -exec cp {} upload/ \;
 
+
           cd upload
 
-          # --------------------------------------------------------
-          # 统一名称
-          # --------------------------------------------------------
+
+          # ========================================================
+          # 统一重命名
+          # ========================================================
+
           for f in *; do
 
             [ -f "$f" ] || continue
 
-            newname="$(
+            newname=$(
               echo "$f" \
               | sed \
                 's/openwrt/MWRT-DONGZAI/g;
                  s/lede/MWRT-DONGZAI/g'
-            )"
+            )
 
             if [ "$f" != "$newname" ]; then
               mv "$f" "$newname"
@@ -728,7 +589,115 @@ jobs:
 
           done
 
-          echo
-          echo "============================================================"
-          echo "固件列表"
-          echo "===========================================================
+
+          echo "── 固件列表 ──"
+
+          ls -lh
+
+
+          # ========================================================
+          # 检查固件
+          # ========================================================
+
+          if [ -z "$(ls -A .)" ]; then
+
+            echo "❌ 警告：未找到固件文件"
+
+            exit 1
+
+          fi
+
+
+          echo "✅ 固件整理完成，共 $(ls | wc -l) 个文件"
+
+
+      # ============================================================
+      # 17. 上传 Artifact
+      # ============================================================
+      - name: 📤 上传 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MWRT-DONGZAI_${{ github.event.inputs.device }}_K${{ steps.kernel.outputs.kernel }}_${{ github.run_number }}
+          path: upload/
+          retention-days: 30
+
+
+      # ============================================================
+      # 18. 生成 Release 标签
+      # ============================================================
+      - name: 🏷️ 生成 Release 标签
+        id: tag
+        run: |
+          DEVICE="${{ github.event.inputs.device }}"
+
+          DATE=$(date +'%Y-%m-%d')
+
+          TIME=$(date +'%H%M')
+
+          KERNEL="${{ steps.kernel.outputs.kernel }}"
+
+          TAG="MWRT-DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
+
+          echo "release_tag=$TAG" \
+            >> "$GITHUB_OUTPUT"
+
+          echo "release_date=$DATE" \
+            >> "$GITHUB_OUTPUT"
+
+          echo "生成 Tag：$TAG"
+
+
+      # ============================================================
+      # 19. 发布 Release
+      # ============================================================
+      - name: 🚀 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+
+          name: "🏗️ MWRT-DONGZAI · ${{ github.event.inputs.device }} · Linux ${{ steps.kernel.outputs.kernel }}"
+
+          files: upload/*
+
+          body: |
+            ## 🏗️ MWRT 固件工厂
+
+            | 项目 | 内容 |
+            |---|---|
+            | 📦 设备 | ${{ github.event.inputs.device }} |
+            | 🐧 Linux 内核 | ${{ steps.kernel.outputs.kernel }} |
+            | 🔖 MWRT Commit | ${{ steps.kernel.outputs.commit }} |
+            | 🕐 编译时间 | ${{ steps.kernel.outputs.build_time }} |
+            | 📅 编译日期 | ${{ steps.tag.outputs.release_date }} |
+            | 🔖 标识 | MWRT-DONGZAI |
+
+            ### Linux 6.18 兼容
+
+            WH3000 / WH3000 Pro 使用最新 Testing Kernel。
+
+            DIY Part 1 会在编译前自动检查并修复
+            MediaTek WED 942 补丁，以适配 Linux 6.18.x
+            新版 `mtk_wed_mcu.c`。
+
+            ### 固件文件说明
+
+            | 文件 | 用途 |
+            |---|---|
+            | `*-initramfs-kernel.bin` | 首次刷机 / TFTP 恢复 |
+            | `*-squashfs-sysupgrade.bin` | ✅ 日常升级固件（推荐） |
+
+            ### 刷机注意
+
+            - 首次刷入请先备份原厂固件
+            - 建议使用 `sysupgrade` 命令升级
+            - 不同设备严禁刷错固件
+            - 升级时建议不要保留旧配置
+
+            ---
+
+            🤖 由 GitHub Actions 自动编译 · MWRT 固件工厂
+
+          generate_release_notes: false
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
