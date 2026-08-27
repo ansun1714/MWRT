@@ -20,16 +20,11 @@
 #   7. 加入 OpenClash
 #   8. RE-SP-01B 扩展 firmware 分区
 #   9. QMI WWAN 多内核兼容
-#  10. Linux 6.18 MediaTek WED 942 自动兼容
+#  10. Linux 6.18 WED 兼容处理
 #
 # ================================================================
 
 set -euo pipefail
-
-
-# ================================================================
-# 基础信息
-# ================================================================
 
 echo
 echo "============================================================"
@@ -49,11 +44,6 @@ echo
 echo "============================================================"
 echo ">>> 1. 添加自定义 Feeds"
 echo "============================================================"
-
-
-# ------------------------------------------------
-# 防止重复写入 feeds.conf.default
-# ------------------------------------------------
 
 add_feed() {
 
@@ -146,6 +136,7 @@ fi
 
 rm -rf "$IPTV_DST"
 
+
 cp -r \
     "$IPTV_SRC" \
     "$IPTV_DST"
@@ -207,33 +198,6 @@ echo
 # ================================================================
 # 5. RE-SP-01B Flash 分区扩展
 # ================================================================
-#
-# 原始问题：
-#
-#   firmware：
-#       0x1ab0000
-#
-#   约：
-#       27328 KB
-#
-# 扩展后：
-#
-#   firmware：
-#       0x1fb0000
-#
-#   约：
-#       32448 KB
-#
-# 移除：
-#
-#   mini
-#   oem
-#
-# 注意：
-#
-#   此修改只针对 RE-SP-01B。
-#
-# ================================================================
 
 echo "============================================================"
 echo ">>> 5. RE-SP-01B Flash 分区修复"
@@ -255,6 +219,7 @@ else
 
 import re
 
+
 DTS = "target/linux/ramips/dts/mt7621_jdcloud_re-sp-01b.dts"
 
 MK = "target/linux/ramips/image/mt7621.mk"
@@ -273,22 +238,16 @@ if "0x1fb0000" in src:
 
     print("  [OK] DTS 已经扩展")
 
-
 else:
 
     orig = src
 
-
-    # firmware：
-    # 0x1ab0000 → 0x1fb0000
 
     src = src.replace(
         "reg = <0x50000 0x1ab0000>",
         "reg = <0x50000 0x1fb0000>"
     )
 
-
-    # 删除 mini
 
     src = re.sub(
         r'\n\s*partition@1b00000\s*\{[^}]*\}\s*;',
@@ -297,8 +256,6 @@ else:
         flags=re.DOTALL
     )
 
-
-    # 删除 oem
 
     src = re.sub(
         r'\n\s*partition@1f00000\s*\{[^}]*\}\s*;',
@@ -404,23 +361,6 @@ echo
 # ================================================================
 # 6. QMI WWAN 多内核兼容
 # ================================================================
-#
-# WH3000 / WH3000 Pro：
-#
-#   Linux 6.18
-#
-#   hrtimer_init()
-#       ↓
-#   hrtimer_setup()
-#
-#
-# RE-SP-01B：
-#
-#   Linux 5.x
-#
-#   继续使用 hrtimer_init()
-#
-# ================================================================
 
 echo "============================================================"
 echo ">>> 6. 修复 QMI WWAN 多内核兼容性"
@@ -470,10 +410,6 @@ def fix(fpath):
     orig = src
 
 
-    # --------------------------------------------------------
-    # 已经修复
-    # --------------------------------------------------------
-
     if "KERNEL_VERSION(6, 17, 0)" in src:
 
         print(
@@ -483,10 +419,6 @@ def fix(fpath):
         return
 
 
-    # --------------------------------------------------------
-    # 没有 hrtimer_init
-    # --------------------------------------------------------
-
     if "hrtimer_init" not in src:
 
         print(
@@ -495,10 +427,6 @@ def fix(fpath):
 
         return
 
-
-    # --------------------------------------------------------
-    # 找 callback
-    # --------------------------------------------------------
 
     m = re.search(
         r"agg_hrtimer\.function\s*=\s*(\w+)\s*;",
@@ -523,10 +451,6 @@ def fix(fpath):
     )
 
 
-    # --------------------------------------------------------
-    # linux/version.h
-    # --------------------------------------------------------
-
     if "#include <linux/version.h>" not in src:
 
         src = re.sub(
@@ -537,10 +461,6 @@ def fix(fpath):
             flags=re.MULTILINE
         )
 
-
-    # --------------------------------------------------------
-    # hrtimer_init
-    # --------------------------------------------------------
 
     def repl(m):
 
@@ -581,10 +501,6 @@ def fix(fpath):
         return
 
 
-    # --------------------------------------------------------
-    # qma_setting_store
-    # --------------------------------------------------------
-
     if fname == "qmi_wwan_f.c":
 
         src, _ = re.subn(
@@ -598,10 +514,6 @@ def fix(fpath):
             flags=re.MULTILINE
         )
 
-
-    # --------------------------------------------------------
-    # 保存
-    # --------------------------------------------------------
 
     if src != orig:
 
@@ -635,187 +547,49 @@ print(
 PYEOF
 
 
+echo
+
+
+# ================================================================
+# 7. Linux 6.18 MediaTek WED
+# ================================================================
+#
+# 重要：
+#
+# 不再修改 LEDE 官方 942 patch。
+#
+# 原因：
+#
+# LEDE 当前 942 是一个正常的 upstream backport patch，
+# 但 Linux 6.18.x 后续已经继续修改 mtk_wed_mcu.c。
+#
+# 我们之前手工修改 942 会产生：
+#
+#   malformed patch
+#
+# 因此这里不再生成、不再重写 unified diff。
+#
+# ================================================================
+
 echo "============================================================"
-echo ">>> 7. Linux 6.18 MediaTek WED 942 兼容修复"
+echo ">>> 7. Linux 6.18 MediaTek WED 检查"
 echo "============================================================"
+
 
 WED_PATCH="target/linux/mediatek/patches-6.18/942-net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch"
 
-if [ ! -f "$WED_PATCH" ]; then
-
-    echo "  [WARN] 未找到 942 WED 补丁："
-    echo "  $WED_PATCH"
-
-else
-
-    python3 << 'PYEOF'
-
-from pathlib import Path
-
-PATCH = Path(
-    "target/linux/mediatek/patches-6.18/"
-    "942-net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch"
-)
-
-src = PATCH.read_text(
-    encoding="utf-8"
-)
-
-# ============================================================
-# 如果已经修复过，则不重复修改
-# ============================================================
-
-if (
-    "+\two_w32(wo, boot_cr, mem_region[MTK_WED_WO_REGION_EMI].phy_addr >> 16);"
-    in src
-    and
-    "+\tval = wo_r32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |"
-    in src
-):
-
-    print("  [OK] 942 补丁已经完成 wo 参数兼容")
-    raise SystemExit(0)
-
-
-# ============================================================
-# 原始 LEDE 942 第 3 个 hunk
-#
-# Linux 6.18.45 的源码相比旧版本多了 WED v3 判断，
-# 所以原来的 13 行 hunk 无法直接匹配。
-# ============================================================
-
-old = """@@ -364,13 +381,13 @@ mtk_wed_mcu_load_firmware(struct mtk_wed
- \t\tboot_cr = MTK_WO_MCU_CFG_LS_WA_BOOT_ADDR_ADDR;
- \telse
- \t\tboot_cr = MTK_WO_MCU_CFG_LS_WM_BOOT_ADDR_ADDR;
--\two_w32(boot_cr, mem_region[MTK_WED_WO_REGION_EMI].phy_addr >> 16);
-+\two_w32(wo, boot_cr, mem_region[MTK_WED_WO_REGION_EMI].phy_addr >> 16);
- \t/* wo firmware reset */
--\two_w32(MTK_WO_MCU_CFG_LS_WF_MCCR_CLR_ADDR, 0xc00);
-+\two_w32(wo, MTK_WO_MCU_CFG_LS_WF_MCCR_CLR_ADDR, 0xc00);
- 
--\tval = wo_r32(MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |
-+\tval = wo_r32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |
- \t      MTK_WO_MCU_CFG_LS_WF_WM_WA_WM_CPU_RSTB_MASK;
--\two_w32(MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR, val);
-+\two_w32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR, val);
- out:
- \trelease_firmware(fw);
-"""
-
-
-# ============================================================
-# Linux 6.18.45 当前源码对应版本
-#
-# 注意：
-#
-# 这里仅修改 wo_r32 / wo_w32 参数。
-#
-# 不再重复加入 WED v3 判断。
-# ============================================================
-
-new = """@@ -364,17 +381,17 @@ mtk_wed_mcu_load_firmware(struct mtk_wed
- \t\tboot_cr = MTK_WO_MCU_CFG_LS_WA_BOOT_ADDR_ADDR;
- \telse
- \t\tboot_cr = MTK_WO_MCU_CFG_LS_WM_BOOT_ADDR_ADDR;
--\two_w32(boot_cr, mem_region[MTK_WED_WO_REGION_EMI].phy_addr >> 16);
-+\two_w32(wo, boot_cr, mem_region[MTK_WED_WO_REGION_EMI].phy_addr >> 16);
- \t/* wo firmware reset */
--\two_w32(MTK_WO_MCU_CFG_LS_WF_MCCR_CLR_ADDR, 0xc00);
-+\two_w32(wo, MTK_WO_MCU_CFG_LS_WF_MCCR_CLR_ADDR, 0xc00);
- 
--\tval = wo_r32(MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |
-+\tval = wo_r32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |
- \t      MTK_WO_MCU_CFG_LS_WF_WM_WA_WM_CPU_RSTB_MASK;
--\two_w32(MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR, val);
-+\two_w32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR, val);
- out:
- \trelease_firmware(fw);
-"""
-
-
-# ============================================================
-# 检查原始结构
-# ============================================================
-
-if old not in src:
-
-    print("  [ERROR] 找不到 LEDE 原始 942 第 3 个 hunk")
-
-    print()
-    print("  当前 942 补丁结构与预期不同。")
-    print("  为避免破坏内核补丁，本次停止编译。")
-
-    raise SystemExit(1)
-
-
-# ============================================================
-# 替换
-# ============================================================
-
-src = src.replace(
-    old,
-    new,
-    1
-)
-
-
-# ============================================================
-# 写回
-# ============================================================
-
-PATCH.write_text(
-    src,
-    encoding="utf-8"
-)
-
-
-print("  ✓ 942 第 3 个 hunk 已适配 Linux 6.18.45")
-print("  ✓ 仅修复 wo_r32 / wo_w32 参数")
-print("  ✓ 保留 Linux 6.18 WED v3 原有判断")
-print("  ✓ Patch 格式保持标准 unified diff")
-
-PYEOF
-
-fi
-
-
-echo
-echo "============================================================"
-echo ">>> WED 942 补丁最终检查"
-echo "============================================================"
 
 if [ -f "$WED_PATCH" ]; then
 
-    echo "── Patch 文件前 100 行检查 ──"
+    echo "  ✓ 找到 LEDE 官方 942 WED patch"
 
-    sed -n '1,100p' "$WED_PATCH"
+    echo "  ✓ 不修改官方 patch"
 
-    echo
-    echo "── Patch 基本格式检查 ──"
+    echo "  ✓ 保持 patch 原始格式"
 
-    if grep -q '^--- a/drivers/net/ethernet/mediatek/mtk_wed_mcu.c' "$WED_PATCH" \
-       && grep -q '^+++ b/drivers/net/ethernet/mediatek/mtk_wed_mcu.c' "$WED_PATCH" \
-       && grep -q '^--- a/drivers/net/ethernet/mediatek/mtk_wed_wo.h' "$WED_PATCH" \
-       && grep -q '^+++ b/drivers/net/ethernet/mediatek/mtk_wed_wo.h' "$WED_PATCH"; then
+else
 
-        echo "  ✓ 942 Patch 文件格式正常"
-
-    else
-
-        echo "  ❌ 942 Patch 文件格式异常"
-
-        exit 1
-
-    fi
-
-fi
-
-echo
-echo ">>> MediaTek WED 942 兼容修复完成"
-)
-
-PYEOF
+    echo "  [WARN] 没有找到 942 WED patch"
 
 fi
 
@@ -831,6 +605,7 @@ echo "============================================================"
 echo ">>> 8. 最终 feeds.conf.default"
 echo "============================================================"
 
+
 cat feeds.conf.default
 
 
@@ -838,54 +613,39 @@ echo
 
 
 # ================================================================
-# 9. 输出 WED 补丁关键内容
+# 9. 完成
 # ================================================================
 
-if [ -f "$WED_PATCH" ]; then
-
-    echo "============================================================"
-    echo ">>> WED 942 补丁检查"
-    echo "============================================================"
-
-    if grep -q \
-      "mtk_wed_is_v3_or_greater(wo->hw)" \
-      "$WED_PATCH"; then
-
-        echo "✅ 942 已包含 Linux 6.18 WED v3 兼容"
-
-    else
-
-        echo "❌ 942 未包含 WED v3 兼容"
-
-        exit 1
-
-    fi
-
-fi
-
-
-# ================================================================
-# 10. 完成
-# ================================================================
-
-echo
 echo "============================================================"
 echo "          ✅ DIY PART 1 全部完成"
 echo "============================================================"
 
+
 echo
+
 echo "已完成："
 
 echo "  ✓ Lucky"
+
 echo "  ✓ Qmodem"
+
 echo "  ✓ rtp2httpd"
+
 echo "  ✓ helloworld"
+
 echo "  ✓ MSD Lite"
+
 echo "  ✓ IPTV Manager"
+
 echo "  ✓ OpenClash"
+
 echo "  ✓ RE-SP-01B Flash 修复"
+
 echo "  ✓ QMI WWAN 多内核兼容"
-echo "  ✓ Linux 6.18 MediaTek WED 942 修复"
+
+echo "  ✓ Linux 6.18 WED patch 保持官方原版"
+
 
 echo
+
 echo "============================================================"
