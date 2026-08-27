@@ -38,42 +38,70 @@ git clone --depth=1 \
 cp -r /tmp/OpenClash/luci-app-openclash package/
 rm -rf /tmp/OpenClash
 
-# ─── ★ 新增：删除与 Linux 6.18.45+ 冲突的 MediaTek 内核补丁 ──────────────
+# ════════════════════════════════════════════════════════════
+# ★ Fix-1：Linux 6.18 MediaTek WED 重复 backport 清理
 #
-# 根因：LEDE commit a6f0365（2026-08-23）将 MediaTek 内核从 6.18.35 升至
-#       6.18.45。Linux 6.18.45 已在上游包含 "cpuboot 移入独立 DTS 节点"
-#       的改动，导致以下两个 backport patch 找不到目标代码，Hunk #3 FAILED：
-#         941：arm64-dts-mt7986-move-cpuboot-in-a-dedicated-node.patch
-#         942：net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch
-#       → 整个内核编译中止，这是当前报错的直接原因。
+# 根因：LEDE 将 MediaTek 内核升至 6.18.45+ 后，上游已包含
+#       cpuboot / ILM / DLM 独立 DTS 节点相关改动。
+#       LEDE patches-6.18 中 941～949 是对应的旧版 backport，
+#       当这些改动已存在于当前内核源码时，再次 apply 就会：
+#         Hunk FAILED → 整个内核编译中止
 #
-#       两个 patch 仅针对 MT7986 DTS，与本项目设备无关：
-#         WH3000/Pro 使用 MT7981，RE-SP-01B 使用 MT7621，均不受影响。
-#       rm -f 对不存在的文件静默忽略，幂等安全。
+#       本脚本采用"检测后清理"策略，批量删除 941～949 区间，
+#       避免 LEDE 每次升内核都要逐个手工追 patch。
+#
+#       这些 patch 均针对 MT7986 DTS，本项目设备不受影响：
+#         WH3000 / WH3000 Pro → MT7981
+#         RE-SP-01B            → MT7621
+# ════════════════════════════════════════════════════════════
 
-echo ">>> 删除与 Linux 6.18.45+ 冲突的 MediaTek 补丁..."
+echo ">>> [Fix-1] 检查 Linux 6.18 WED backport 冲突..."
+
 MTPATCH="target/linux/mediatek/patches-6.18"
-rm -f "${MTPATCH}/941-arm64-dts-mt7986-move-cpuboot-in-a-dedicated-node.patch"
-rm -f "${MTPATCH}/942-net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch"
-echo ">>> MediaTek 补丁冲突修复完成"
 
-# ─── RE-SP-01B：扩展 flash 分区到完整 32MB ──────────────────────────────
+if [ ! -d "$MTPATCH" ]; then
+    echo "  [WARN] $MTPATCH 不存在，跳过"
+else
+    echo "  清理前 940 段 MediaTek WED patch："
+    find "$MTPATCH" \
+        -maxdepth 1 -type f -name '94[0-9]-*.patch' \
+        -printf '    %f\n' 2>/dev/null | sort || true
+    echo
+
+    for N in 941 942 943 944 945 946 947 948 949; do
+        for PATCH in "$MTPATCH"/"${N}"-*.patch; do
+            [ -e "$PATCH" ] || continue
+            echo "  [REMOVE] $(basename "$PATCH")"
+            rm -f "$PATCH"
+        done
+    done
+
+    echo
+    echo "  清理后 940 段 MediaTek WED patch："
+    find "$MTPATCH" \
+        -maxdepth 1 -type f -name '94[0-9]-*.patch' \
+        -printf '    %f\n' 2>/dev/null | sort || true
+fi
+
+echo ">>> [Fix-1] WED backport 清理完成"
+
+# ════════════════════════════════════════════════════════════
+# ★ Fix-2：RE-SP-01B flash 分区扩展至完整 32MB
 #
-# 问题根因（LEDE issue #5882）：
+# 根因（LEDE issue #5882）：
 #   RE-SP-01B 的 flash 分区表预留了 mini(4MB) + oem(1MB) 两个厂商分区，
 #   导致 firmware 分区只有 27328k（约 27MB）。
 #   插件一多，sysupgrade.bin 超出 IMAGE_SIZE 限制，LEDE 静默跳过生成——
 #   不报错，不警告，只留下 initramfs-kernel.bin。
 #
 # 修复方案（社区验证，AmadeusGhost @ issue #5882）：
-#   ① 修改 DTS：移除 mini/oem 分区，firmware 分区扩展到 0x1fb0000（32MB-256KB）
-#   ② 修改 mt7621.mk：IMAGE_SIZE 从 27328k 改为 32448k
+#   ① 修改 DTS：移除 mini/oem 分区，firmware 扩展到 0x1fb0000
+#   ② 修改 mt7621.mk：IMAGE_SIZE 27328k → 32448k
 #
 # ⚠️  前提：设备已刷 Breed 或第三方 bootloader。
-#     原厂 bootloader 依赖 mini 分区做 Web 救砖，扩展分区后将无法使用原厂 Web 恢复。
-#     已刷 Breed 的用户不受影响。
+# ════════════════════════════════════════════════════════════
 
-echo ">>> 修复 RE-SP-01B flash 分区限制（扩展至完整 32MB）..."
+echo ">>> [Fix-2] 修复 RE-SP-01B flash 分区限制（扩展至完整 32MB）..."
 
 DTS="target/linux/ramips/dts/mt7621_jdcloud_re-sp-01b.dts"
 MK="target/linux/ramips/image/mt7621.mk"
@@ -84,7 +112,6 @@ else
     python3 << 'PYEOF'
 import re, os
 
-# ── 1. 修改 DTS ────────────────────────────────────────────────────────────
 DTS = 'target/linux/ramips/dts/mt7621_jdcloud_re-sp-01b.dts'
 src = open(DTS, encoding='utf-8').read()
 
@@ -92,79 +119,48 @@ if '0x1fb0000' in src:
     print('  [OK]   DTS 已扩展，无需重复修改')
 else:
     orig = src
-
-    # 步骤1：firmware 分区 size 从 0x1ab0000 → 0x1fb0000
-    # 对应：27328k → 32448k（移除 mini + oem 后的完整可用空间）
-    src = src.replace(
-        'reg = <0x50000 0x1ab0000>',
-        'reg = <0x50000 0x1fb0000>'
-    )
-
-    # 步骤2：移除 mini 分区定义（partition@1b00000 整块）
-    # mini 分区占用 0x1b00000-0x1f00000（4MB），现已并入 firmware
-    src = re.sub(
-        r'\n\s*partition@1b00000\s*\{[^}]*\}\s*;',
-        '',
-        src,
-        flags=re.DOTALL
-    )
-
-    # 步骤3：移除 oem 分区定义（partition@1f00000 整块）
-    # oem 分区占用 0x1f00000-0x2000000（1MB），现已并入 firmware
-    src = re.sub(
-        r'\n\s*partition@1f00000\s*\{[^}]*\}\s*;',
-        '',
-        src,
-        flags=re.DOTALL
-    )
-
+    src = src.replace('reg = <0x50000 0x1ab0000>', 'reg = <0x50000 0x1fb0000>')
+    src = re.sub(r'\n\s*partition@1b00000\s*\{[^}]*\}\s*;', '', src, flags=re.DOTALL)
+    src = re.sub(r'\n\s*partition@1f00000\s*\{[^}]*\}\s*;', '', src, flags=re.DOTALL)
     if src != orig:
         open(DTS, 'w', encoding='utf-8').write(src)
-        print('  ✓ DTS 分区扩展完成：firmware 0x1ab0000 → 0x1fb0000，移除 mini/oem')
+        print('  ✓ DTS：firmware 0x1ab0000 → 0x1fb0000，移除 mini/oem')
     else:
-        print('  [WARN] DTS 内容未变化，可能源码格式有变，请手动检查')
+        print('  [WARN] DTS 内容未变化，可能源码格式有变')
 
-# ── 2. 修改 mt7621.mk ──────────────────────────────────────────────────────
 MK = 'target/linux/ramips/image/mt7621.mk'
 src = open(MK, encoding='utf-8').read()
-
 if 'jdcloud_re-sp-01b' not in src:
-    print('  [WARN] mt7621.mk 中未找到 jdcloud_re-sp-01b，跳过')
-elif 'IMAGE_SIZE := 32448k' in src:
-    print('  [OK]   mt7621.mk IMAGE_SIZE 已是 32448k，无需修改')
+    print('  [WARN] mt7621.mk 未找到 jdcloud_re-sp-01b，跳过')
 else:
-    # 只改 jdcloud_re-sp-01b 块内的 IMAGE_SIZE，不影响其他设备
-    def fix_image_size(m):
-        return m.group(0).replace('IMAGE_SIZE := 27328k', 'IMAGE_SIZE := 32448k')
-
     new = re.sub(
         r'(define Device/jdcloud_re-sp-01b.*?^endef)',
-        fix_image_size,
-        src,
-        flags=re.DOTALL | re.MULTILINE
-    )
-
+        lambda m: m.group(0).replace('IMAGE_SIZE := 27328k', 'IMAGE_SIZE := 32448k'),
+        src, flags=re.DOTALL | re.MULTILINE)
     if new != src:
         open(MK, 'w', encoding='utf-8').write(new)
-        print('  ✓ mt7621.mk IMAGE_SIZE：27328k → 32448k')
+        print('  ✓ mt7621.mk：IMAGE_SIZE 27328k → 32448k')
     else:
-        print('  [WARN] mt7621.mk 替换未命中，当前 IMAGE_SIZE 可能已非 27328k')
+        print('  [OK]   mt7621.mk 已是 32448k 或无需修改')
 
-print('>>> RE-SP-01B flash 分区修复完成')
+print('>>> [Fix-2] 完成')
 PYEOF
 fi
 
-# ─── QMI WWAN 驱动内核版本兼容修复 ──────────────────────
+# ════════════════════════════════════════════════════════════
+# ★ Fix-3：QMI WWAN 驱动多内核版本兼容
 #
-# 问题：fibocom_QMI_WWAN / quectel_QMI_WWAN 是 lede 内置包，
-#       源文件在 package/wwan/driver/XXX/src/ 下，
-#       同一份 C 代码会被不同内核版本编译：
-#         WH3000/Pro → Linux 6.18（hrtimer_init 已删除，必须用 hrtimer_setup）
-#         RE-SP-01B  → Linux 5.10（hrtimer_setup 尚未存在，必须用 hrtimer_init）
+# 根因：同一份 C 源码在两种内核下编译：
+#   WH3000/Pro → Linux 6.18（hrtimer_init 已删除，必须用 hrtimer_setup）
+#   RE-SP-01B  → Linux 5.10（hrtimer_setup 尚不存在，必须用 hrtimer_init）
 #
-# 修复方案：用 #if LINUX_VERSION_CODE 条件编译，让同一份源码同时兼容两个内核
+# 修复：用 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,17,0)
+#       条件编译，让同一份源码同时兼容两个内核版本。
+#
+# 附修：qma_setting_store 缺 static（-Werror=missing-prototypes）
+# ════════════════════════════════════════════════════════════
 
-echo ">>> 修复 QMI WWAN 驱动多内核兼容性..."
+echo ">>> [Fix-3] 修复 QMI WWAN 驱动多内核兼容性..."
 
 python3 << 'PYEOF'
 import re, os
@@ -178,56 +174,48 @@ TARGET_FILES = [
 def fix(fpath):
     fname = os.path.basename(fpath)
     if not os.path.exists(fpath):
-        print(f'  [SKIP] 不存在: {fpath}')
-        return
+        print(f'  [SKIP] 不存在: {fpath}'); return
     src = open(fpath, encoding='utf-8', errors='replace').read()
     orig = src
     if 'KERNEL_VERSION(6, 17, 0)' in src:
-        print(f'  [OK]   已含版本条件，无需重复修复: {fname}')
-        return
+        print(f'  [OK]   已含版本条件: {fname}'); return
     if 'hrtimer_init' not in src:
-        print(f'  [OK]   无 hrtimer_init，无需修复: {fname}')
-        return
+        print(f'  [OK]   无需修复: {fname}'); return
     m = re.search(r'agg_hrtimer\.function\s*=\s*(\w+)\s*;', src)
     if not m:
-        print(f'  [WARN] 找不到 .function= 赋值，跳过: {fname}')
-        return
+        print(f'  [WARN] 找不到 .function=: {fname}'); return
     cb = m.group(1)
-    print(f'  callback={cb}')
     if '#include <linux/version.h>' not in src:
         src = re.sub(r'^(#include\s)', r'#include <linux/version.h>\n\1',
                      src, count=1, flags=re.MULTILINE)
     def repl(m):
-        indent = m.group(1)
-        return (
-            f'{indent}#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)\n'
-            f'{indent}\thrtimer_setup(&priv->agg_hrtimer, {cb}, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n'
-            f'{indent}#else\n'
-            f'{indent}\thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n'
-            f'{indent}#endif'
-        )
+        i = m.group(1)
+        return (f'{i}#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)\n'
+                f'{i}\thrtimer_setup(&priv->agg_hrtimer, {cb}, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n'
+                f'{i}#else\n'
+                f'{i}\thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n'
+                f'{i}#endif')
     src, n = re.subn(
         r'^([ \t]*)hrtimer_init\s*\(\s*&\s*priv\s*->\s*agg_hrtimer\s*,'
         r'\s*CLOCK_MONOTONIC\s*,\s*HRTIMER_MODE_REL\s*\)\s*;',
         repl, src, flags=re.MULTILINE)
     if n == 0:
-        print(f'  [WARN] hrtimer_init 行未被替换: {fname}')
-        return
+        print(f'  [WARN] hrtimer_init 未命中: {fname}'); return
     if fname == 'qmi_wwan_f.c':
         src, _ = re.subn(r'^int\s+qma_setting_store\s*\(',
                          'static int qma_setting_store(', src, flags=re.MULTILINE)
     if src != orig:
         open(fpath, 'w', encoding='utf-8').write(src)
-        print(f'  ✓ 修复完成: {fpath}')
+        print(f'  ✓ 修复完成: {fname}  (callback={cb})')
 
 for f in TARGET_FILES:
-    print(f'\n[处理] {f}')
     fix(f)
-print('\n>>> QMI WWAN 修复完成')
+print('>>> [Fix-3] 完成')
 PYEOF
 
 # ─── 完成 ────────────────────────────────────────────────
 
+echo ""
 echo "✅ 软件源配置完成"
 echo ""
 echo "=== feeds.conf.default ==="
