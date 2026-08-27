@@ -9,16 +9,18 @@ on:
         default: 'wh3000pro'
         type: choice
         options:
-          - wh3000        # 华硅 WH3000       · MT7981 ARM · 512MB
-          - wh3000pro     # 华硅 WH3000 Pro   · MT7981 ARM · 512MB
-          - re-sp-01b     # 京东云无线宝       · MT7621 MIPS · 512MB
+          - wh3000
+          - wh3000pro
+          - re-sp-01b
 
 env:
   LEDE_REPO: https://github.com/coolsnowwolf/lede
   LEDE_BRANCH: master
 
 jobs:
+
   build:
+
     runs-on: ubuntu-22.04
 
     permissions:
@@ -29,8 +31,11 @@ jobs:
       # ============================================================
       # 1. 固件工厂信息
       # ============================================================
+
       - name: 🎯 MWRT 固件工厂
+
         run: |
+
           cat << 'EOF'
 
             ____   ___  _   _  ____ _____    _    ___
@@ -42,26 +47,45 @@ jobs:
 
           EOF
 
+
           DEVICE="${{ github.event.inputs.device }}"
 
+
           case "$DEVICE" in
+
             wh3000)
+
               DNAME="华硅 WH3000"
               DSPEC="MT7981 ARM · 512MB RAM · eMMC"
+
               ;;
+
+
             wh3000pro)
+
               DNAME="华硅 WH3000 Pro"
               DSPEC="MT7981 ARM · 512MB RAM · eMMC"
+
               ;;
+
+
             re-sp-01b)
+
               DNAME="京东云无线宝 RE-SP-01B"
               DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC"
+
               ;;
+
+
             *)
+
               echo "❌ 未知设备：$DEVICE"
               exit 1
+
               ;;
+
           esac
+
 
           echo "  ┌─────────────────────────────────────────┐"
           echo "  │  📦 设备：$DNAME"
@@ -74,36 +98,52 @@ jobs:
       # ============================================================
       # 2. 检出 MWRT 仓库
       # ============================================================
+
       - name: 📥 检出仓库
+
         uses: actions/checkout@v4
 
 
       # ============================================================
       # 3. 释放磁盘空间
       # ============================================================
+
       - name: 🧹 释放磁盘空间
+
         run: |
-          sudo rm -rf /usr/share/dotnet \
-                      /opt/ghc \
-                      /usr/local/lib/android \
-                      /opt/hostedtoolcache/CodeQL
+
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL
+
 
           sudo docker image prune -a -f
+
           sudo apt-get clean
 
+
           sudo swapoff -a || true
+
           sudo rm -f /swapfile
 
+
           echo "── 当前磁盘空间 ──"
+
           df -h
 
 
       # ============================================================
       # 4. 初始化编译环境
       # ============================================================
+
       - name: ⚙️ 初始化编译环境
+
         run: |
+
           sudo apt-get update -q
+
 
           sudo apt-get install -y \
             build-essential \
@@ -135,50 +175,51 @@ jobs:
             device-tree-compiler \
             patch
 
+
           echo "── 编译工具版本 ──"
+
           gcc --version | head -1
+
           clang --version | head -1
+
           python3 --version
+
           ccache --version | head -1
 
 
       # ============================================================
       # 5. 克隆 LEDE
       # ============================================================
+
       - name: 📦 克隆源码
+
         run: |
+
           git clone \
             --depth=1 \
             -b "$LEDE_BRANCH" \
             "$LEDE_REPO" \
             openwrt
 
+
           echo "── 源码最新提交 ──"
+
           git -C openwrt log --oneline -3
 
 
       # ============================================================
       # 6. DIY Part 1
-      #
-      # 这里会执行：
-      #
-      # Lucky
-      # Qmodem
-      # rtp2httpd
-      # helloworld
-      # MSD Lite
-      # IPTV Manager
-      # OpenClash
-      # RE-SP-01B 分区
-      # QMI WWAN
-      # Linux 6.18 MediaTek WED 942 修复
-      #
       # ============================================================
+
       - name: 🔧 DIY Part 1 - 配置 Feeds
+
         run: |
+
           chmod +x diy-part1.sh
 
+
           cd openwrt
+
 
           ../diy-part1.sh
 
@@ -186,11 +227,16 @@ jobs:
       # ============================================================
       # 7. 更新 & 安装 Feeds
       # ============================================================
+
       - name: 🔄 更新 & 安装 Feeds
+
         run: |
+
           cd openwrt
 
+
           ./scripts/feeds update -a
+
 
           ./scripts/feeds install -a
 
@@ -198,29 +244,46 @@ jobs:
       # ============================================================
       # 8. 加载设备配置
       # ============================================================
+
       - name: 🎛️ 加载设备配置
+
         run: |
+
           DEVICE="${{ github.event.inputs.device }}"
 
+
           echo "── 加载配置：${DEVICE}.config ──"
+
 
           case "$DEVICE" in
 
             wh3000)
+
               cp wh3000.config openwrt/.config
+
               ;;
+
 
             wh3000pro)
+
               cp wh3000pro.config openwrt/.config
+
               ;;
+
 
             re-sp-01b)
+
               cp re-sp-01b.config openwrt/.config
+
               ;;
 
+
             *)
+
               echo "❌ 未知设备：$DEVICE"
+
               exit 1
+
               ;;
 
           esac
@@ -232,14 +295,20 @@ jobs:
 
           if [ "$DEVICE" = "re-sp-01b" ]; then
 
-            grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config \
+            grep -v "CONFIG_TARGET_.*_DEVICE_" \
+              openwrt/.config \
               > /tmp/.config_patched
+
 
             echo \
               "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" \
               >> /tmp/.config_patched
 
-            cp /tmp/.config_patched openwrt/.config
+
+            cp \
+              /tmp/.config_patched \
+              openwrt/.config
+
 
             echo "✅ RE-SP-01B 设备目标已修正"
 
@@ -253,71 +322,119 @@ jobs:
           echo "── 当前设备目标 ──"
 
           grep "DEVICE_" openwrt/.config \
-            | grep -v "^#" || true
+            | grep -v "^#" \
+            || true
 
 
       # ============================================================
       # 9. 配置内核
-      #
-      # WH3000 / WH3000 Pro：
-      #     CONFIG_TESTING_KERNEL=y
-      #
-      # 自动跟随 LEDE 最新 Linux 6.18 testing kernel
-      #
-      # RE-SP-01B：
-      #     禁用 testing kernel
-      #     使用稳定内核
-      #
       # ============================================================
+
       - name: 🐧 配置内核版本
+
         run: |
+
           DEVICE="${{ github.event.inputs.device }}"
+
+
+          # --------------------------------------------------------
+          # 清除旧内核选择
+          # --------------------------------------------------------
+
+          sed -i \
+            '/^CONFIG_TESTING_KERNEL=/d' \
+            openwrt/.config
+
+
+          sed -i \
+            '/^# CONFIG_TESTING_KERNEL is not set/d' \
+            openwrt/.config
+
+
+          sed -i \
+            '/^CONFIG_LINUX_6_6=/d' \
+            openwrt/.config
+
+
+          sed -i \
+            '/^CONFIG_LINUX_6_12=/d' \
+            openwrt/.config
+
+
+          sed -i \
+            '/^CONFIG_LINUX_6_18=/d' \
+            openwrt/.config
+
 
           case "$DEVICE" in
 
             wh3000|wh3000pro)
 
-              # 防止重复配置
-              sed -i '/CONFIG_TESTING_KERNEL=/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_6=/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_12=/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_18=/d' openwrt/.config
+              echo "📦 Filogic ARM：$DEVICE"
 
-              printf 'CONFIG_TESTING_KERNEL=y\n' \
+              echo "🐧 使用 LEDE Testing Kernel"
+
+
+              printf \
+                'CONFIG_TESTING_KERNEL=y\n' \
                 >> openwrt/.config
 
-              echo "✅ Filogic ARM：已启用最新测试内核"
 
               ;;
 
 
             re-sp-01b)
 
-              sed -i '/CONFIG_TESTING_KERNEL=/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_6=/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_12=/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_18=/d' openwrt/.config
+              echo "📦 MT7621 MIPS：RE-SP-01B"
 
-              printf '# CONFIG_TESTING_KERNEL is not set\n' \
+              echo "🐧 使用稳定内核"
+
+
+              printf \
+                '# CONFIG_TESTING_KERNEL is not set\n' \
                 >> openwrt/.config
 
-              echo "⏭️ MT7621 MIPS：使用稳定内核（5.x）"
+
+              ;;
+
+
+            *)
+
+              echo "❌ 未知设备"
+
+              exit 1
 
               ;;
 
           esac
 
 
+          echo
+
+          echo "── 最终内核选择 ──"
+
+          grep -E \
+            "CONFIG_TESTING_KERNEL|CONFIG_LINUX_6" \
+            openwrt/.config \
+            || true
+
+
       # ============================================================
       # 10. DIY Part 2
       # ============================================================
+
       - name: 🔧 DIY Part 2 - 文件定制
+
         run: |
+
           chmod +x diy-part2.sh
+
 
           cd openwrt
 
+
           export DEVICE="${{ github.event.inputs.device }}"
+
 
           ../diy-part2.sh
 
@@ -325,92 +442,140 @@ jobs:
       # ============================================================
       # 11. 生成最终配置
       # ============================================================
+
       - name: 📋 生成最终配置
+
         run: |
+
           cd openwrt
+
 
           make defconfig
 
+
           echo "── TARGET 配置 ──"
 
+
           grep "CONFIG_TARGET_" .config \
-            | head -10 || true
+            | head -10 \
+            || true
+
 
           echo "── 内核版本 ──"
+
 
           grep -E \
             "LINUX_6|LINUX_5|TESTING_KERNEL" \
             .config \
-            | head -10 || true
+            | head -10 \
+            || true
 
 
       # ============================================================
       # 12. 下载编译依赖
       # ============================================================
+
       - name: ⬇️ 下载编译依赖
+
         run: |
+
           cd openwrt
+
 
           make download -j8
 
+
           echo "── 检查异常下载文件 ──"
+
 
           find dl \
             -size -1024c \
             -exec ls -l {} \; \
-            2>/dev/null || true
+            2>/dev/null \
+            || true
 
 
       # ============================================================
       # 13. 编译固件
-      #
-      # 这里是本次 Workflow 的重要修复。
-      #
-      # 原来的：
-      #
-      # make | tee | grep || true
-      #
-      # 会干扰真正的 make 返回值。
-      #
-      # 现在：
-      #
-      # set -o pipefail
-      #
-      # 确保 make 真失败时，GitHub Actions 正确失败。
-      #
       # ============================================================
+
       - name: 🔨 编译固件
+
         id: compile
+
         run: |
+
           cd openwrt
 
-          echo "── 开始编译，CPU 核心：$(nproc) ──"
+
+          echo "============================================================"
+
+          echo "              开始编译 MWRT 固件"
+
+          echo "============================================================"
+
+
+          echo "CPU 核心：$(nproc)"
+
+          echo
+
+          free -h
+
+
+          echo
+
+          echo "── 开始并行编译 ──"
+
 
           set -o pipefail
 
+
           if make -j$(nproc) V=s 2>&1 | tee /tmp/build.log; then
 
-            echo "✅ 并行编译完成"
+            echo
+
+            echo "============================================================"
+
+            echo "✅ 并行编译成功"
+
+            echo "============================================================"
 
           else
 
-            echo ""
+            echo
+
             echo "============================================================"
+
             echo "❌ 并行编译失败"
+
             echo "============================================================"
 
-            echo ""
-            echo "── 最后 200 行错误日志 ──"
 
-            tail -200 /tmp/build.log || true
+            echo
 
-            echo ""
-            echo "── 编译失败位置搜索 ──"
+            echo "── 错误关键词 ──"
+
 
             grep -E \
-              "Hunk .*FAILED|ERROR:|error:|Error |FAILED|failed" \
+              "Hunk .*FAILED|malformed patch|ERROR:|error:|Error:|FAILED|failed" \
               /tmp/build.log \
-              | tail -100 || true
+              | tail -100 \
+              || true
+
+
+            echo
+
+            echo "── 最后 200 行完整日志 ──"
+
+
+            tail -200 /tmp/build.log \
+              || true
+
+
+            echo
+
+            echo "❌ 编译失败，停止 Workflow"
+
 
             exit 1
 
@@ -419,41 +584,39 @@ jobs:
 
       # ============================================================
       # 14. 编译失败上传日志
-      #
-      # 如果以后再出现：
-      #
-      # Hunk FAILED
-      # kernel error
-      # package error
-      # DTS error
-      #
-      # 可以直接下载完整日志。
-      #
       # ============================================================
+
       - name: 📋 上传失败编译日志
+
         if: failure()
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: MWRT-build-log-${{ github.event.inputs.device }}-${{ github.run_number }}
+
           path: |
             /tmp/build.log
             openwrt/tmp/
+
           retention-days: 14
+
           if-no-files-found: ignore
 
 
       # ============================================================
       # 15. 获取完整内核版本
       # ============================================================
+
       - name: 🔍 获取完整内核版本
+
         id: kernel
+
         run: |
+
           cd openwrt
 
-          # ========================================================
-          # 策略 1：
-          # make kernelversion
-          # ========================================================
 
           KERNEL=$(
             make kernelversion 2>/dev/null \
@@ -463,14 +626,10 @@ jobs:
           )
 
 
-          # ========================================================
-          # 策略 2：
-          # 搜索 build_dir
-          # ========================================================
-
           if [ -z "$KERNEL" ]; then
 
             echo "⚠️ make kernelversion 未获取到版本"
+
 
             KERNEL=$(
               find build_dir \
@@ -487,14 +646,10 @@ jobs:
           fi
 
 
-          # ========================================================
-          # 策略 3：
-          # 从 .config 获取
-          # ========================================================
-
           if [ -z "$KERNEL" ]; then
 
-            echo "⚠️ 未找到完整版本，从 .config 获取大版本"
+            echo "⚠️ 未找到完整版本，从 .config 获取"
+
 
             MAJOR_MINOR=$(
               grep "^CONFIG_LINUX_[0-9_]*=y" .config \
@@ -503,6 +658,7 @@ jobs:
               | sed 's/=y//' \
               | tr '_' '.'
             )
+
 
             if [ -n "$MAJOR_MINOR" ]; then
 
@@ -522,21 +678,21 @@ jobs:
           BUILD_TIME=$(date '+%Y-%m-%d %H:%M UTC')
 
 
-          echo "kernel=$KERNEL" \
-            >> "$GITHUB_OUTPUT"
+          echo "kernel=$KERNEL" >> "$GITHUB_OUTPUT"
 
-          echo "commit=$COMMIT" \
-            >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
-          echo "build_time=$BUILD_TIME" \
-            >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
 
 
-          echo ""
+          echo
+
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           echo "完整内核版本 : $KERNEL"
+
           echo "MWRT Commit  : $COMMIT"
+
           echo "编译时间     : $BUILD_TIME"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -545,14 +701,15 @@ jobs:
       # ============================================================
       # 16. 整理固件
       # ============================================================
+
       - name: 📁 整理固件
+
         id: organize
+
         run: |
+
           mkdir -p upload
 
-          # ========================================================
-          # 搜索固件
-          # ========================================================
 
           find openwrt/bin/targets/ \
             -type f \
@@ -568,13 +725,10 @@ jobs:
           cd upload
 
 
-          # ========================================================
-          # 统一重命名
-          # ========================================================
-
           for f in *; do
 
             [ -f "$f" ] || continue
+
 
             newname=$(
               echo "$f" \
@@ -583,8 +737,11 @@ jobs:
                  s/lede/MWRT-DONGZAI/g'
             )
 
+
             if [ "$f" != "$newname" ]; then
+
               mv "$f" "$newname"
+
             fi
 
           done
@@ -595,13 +752,9 @@ jobs:
           ls -lh
 
 
-          # ========================================================
-          # 检查固件
-          # ========================================================
-
           if [ -z "$(ls -A .)" ]; then
 
-            echo "❌ 警告：未找到固件文件"
+            echo "❌ 未找到固件文件"
 
             exit 1
 
@@ -614,20 +767,30 @@ jobs:
       # ============================================================
       # 17. 上传 Artifact
       # ============================================================
+
       - name: 📤 上传 Artifact
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: MWRT-DONGZAI_${{ github.event.inputs.device }}_K${{ steps.kernel.outputs.kernel }}_${{ github.run_number }}
+
           path: upload/
+
           retention-days: 30
 
 
       # ============================================================
       # 18. 生成 Release 标签
       # ============================================================
+
       - name: 🏷️ 生成 Release 标签
+
         id: tag
+
         run: |
+
           DEVICE="${{ github.event.inputs.device }}"
 
           DATE=$(date +'%Y-%m-%d')
@@ -636,13 +799,17 @@ jobs:
 
           KERNEL="${{ steps.kernel.outputs.kernel }}"
 
+
           TAG="MWRT-DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
+
 
           echo "release_tag=$TAG" \
             >> "$GITHUB_OUTPUT"
 
+
           echo "release_date=$DATE" \
             >> "$GITHUB_OUTPUT"
+
 
           echo "生成 Tag：$TAG"
 
@@ -650,16 +817,24 @@ jobs:
       # ============================================================
       # 19. 发布 Release
       # ============================================================
+
       - name: 🚀 发布到 Release
+
         uses: softprops/action-gh-release@v2
+
         with:
+
           tag_name: ${{ steps.tag.outputs.release_tag }}
+
 
           name: "🏗️ MWRT-DONGZAI · ${{ github.event.inputs.device }} · Linux ${{ steps.kernel.outputs.kernel }}"
 
+
           files: upload/*
 
+
           body: |
+
             ## 🏗️ MWRT 固件工厂
 
             | 项目 | 内容 |
@@ -671,33 +846,33 @@ jobs:
             | 📅 编译日期 | ${{ steps.tag.outputs.release_date }} |
             | 🔖 标识 | MWRT-DONGZAI |
 
-            ### Linux 6.18 兼容
+            ### Linux 6.18
 
-            WH3000 / WH3000 Pro 使用最新 Testing Kernel。
+            WH3000 / WH3000 Pro 使用 LEDE Testing Kernel。
 
-            DIY Part 1 会在编译前自动检查并修复
-            MediaTek WED 942 补丁，以适配 Linux 6.18.x
-            新版 `mtk_wed_mcu.c`。
+            DIY Part 1 会自动处理 MediaTek WED 942
+            与当前 Linux 6.18 源码的兼容问题。
 
-            ### 固件文件说明
+            ### 固件文件
 
             | 文件 | 用途 |
             |---|---|
-            | `*-initramfs-kernel.bin` | 首次刷机 / TFTP 恢复 |
-            | `*-squashfs-sysupgrade.bin` | ✅ 日常升级固件（推荐） |
+            | `*-initramfs-kernel.bin` | 首次刷机 / TFTP |
+            | `*-squashfs-sysupgrade.bin` | ✅ 日常升级 |
 
-            ### 刷机注意
+            ### 注意
 
-            - 首次刷入请先备份原厂固件
-            - 建议使用 `sysupgrade` 命令升级
-            - 不同设备严禁刷错固件
-            - 升级时建议不要保留旧配置
+            - 首次刷机请备份原厂固件
+            - 不同设备严禁刷错
+            - 升级建议不要保留旧配置
 
             ---
 
-            🤖 由 GitHub Actions 自动编译 · MWRT 固件工厂
+            🤖 MWRT-DONGZAI 固件工厂
 
           generate_release_notes: false
 
+
         env:
+
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
