@@ -635,47 +635,11 @@ print(
 PYEOF
 
 
-echo
-
-
-# ================================================================
-# 7. Linux 6.18 MediaTek WED 942 补丁自动兼容
-# ================================================================
-#
-# 这是本次编译失败的核心修复。
-#
-# 当前 LEDE：
-#
-#   942-net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch
-#
-# 原本针对较早的 mtk_wed_mcu.c。
-#
-# Linux 6.18.45 已经增加：
-#
-#   mtk_wed_is_v3_or_greater()
-#
-# 因此原补丁第三个 hunk：
-#
-#   Hunk #3 FAILED at 381
-#
-# 本修复：
-#
-#   保留原 942 功能
-#   保留 MT7981
-#   保留 MT7986
-#   保留 MT7988
-#   保留 WED v3 判断
-#   仅更新 wo_r32 / wo_w32 调用方式
-#
-# ================================================================
-
 echo "============================================================"
 echo ">>> 7. Linux 6.18 MediaTek WED 942 兼容修复"
 echo "============================================================"
 
-
 WED_PATCH="target/linux/mediatek/patches-6.18/942-net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch"
-
 
 if [ ! -f "$WED_PATCH" ]; then
 
@@ -688,38 +652,39 @@ else
 
 from pathlib import Path
 
-
 PATCH = Path(
     "target/linux/mediatek/patches-6.18/"
     "942-net-ethernet-mtk_wed-move-cpuboot-in-a-dedicated-dts.patch"
 )
 
-
 src = PATCH.read_text(
     encoding="utf-8"
 )
 
-
 # ============================================================
-# 情况 1：
-# 上游已经包含 v3 兼容代码
+# 如果已经修复过，则不重复修改
 # ============================================================
 
-if "mtk_wed_is_v3_or_greater(wo->hw)" in src:
+if (
+    "+\two_w32(wo, boot_cr, mem_region[MTK_WED_WO_REGION_EMI].phy_addr >> 16);"
+    in src
+    and
+    "+\tval = wo_r32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |"
+    in src
+):
 
-    print(
-        "  [OK] 942 补丁已经包含 Linux 6.18 WED v3 兼容代码"
-    )
+    print("  [OK] 942 补丁已经完成 wo 参数兼容")
+    raise SystemExit(0)
 
 
 # ============================================================
-# 情况 2：
-# 旧版 942 补丁
+# 原始 LEDE 942 第 3 个 hunk
+#
+# Linux 6.18.45 的源码相比旧版本多了 WED v3 判断，
+# 所以原来的 13 行 hunk 无法直接匹配。
 # ============================================================
 
-else:
-
-    old = """@@ -364,13 +381,13 @@ mtk_wed_mcu_load_firmware(struct mtk_wed
+old = """@@ -364,13 +381,13 @@ mtk_wed_mcu_load_firmware(struct mtk_wed
  \t\tboot_cr = MTK_WO_MCU_CFG_LS_WA_BOOT_ADDR_ADDR;
  \telse
  \t\tboot_cr = MTK_WO_MCU_CFG_LS_WM_BOOT_ADDR_ADDR;
@@ -739,7 +704,17 @@ else:
 """
 
 
-    new = """@@ -364,13 +381,17 @@ mtk_wed_mcu_load_firmware(struct mtk_wed
+# ============================================================
+# Linux 6.18.45 当前源码对应版本
+#
+# 注意：
+#
+# 这里仅修改 wo_r32 / wo_w32 参数。
+#
+# 不再重复加入 WED v3 判断。
+# ============================================================
+
+new = """@@ -364,17 +381,17 @@ mtk_wed_mcu_load_firmware(struct mtk_wed
  \t\tboot_cr = MTK_WO_MCU_CFG_LS_WA_BOOT_ADDR_ADDR;
  \telse
  \t\tboot_cr = MTK_WO_MCU_CFG_LS_WM_BOOT_ADDR_ADDR;
@@ -750,65 +725,94 @@ else:
 +\two_w32(wo, MTK_WO_MCU_CFG_LS_WF_MCCR_CLR_ADDR, 0xc00);
  
 -\tval = wo_r32(MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |
--\t      MTK_WO_MCU_CFG_LS_WF_WM_WA_WM_CPU_RSTB_MASK;
++\tval = wo_r32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR) |
+ \t      MTK_WO_MCU_CFG_LS_WF_WM_WA_WM_CPU_RSTB_MASK;
 -\two_w32(MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR, val);
-+\tval = wo_r32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR);
-+\tif (!mtk_wed_is_v3_or_greater(wo->hw) && wo->hw->index)
-+\t\tval |= MTK_WO_MCU_CFG_LS_WF_WM_WA_WA_CPU_RSTB_MASK;
-+\telse
-+\t\tval |= MTK_WO_MCU_CFG_LS_WF_WM_WA_WM_CPU_RSTB_MASK;
 +\two_w32(wo, MTK_WO_MCU_CFG_LS_WF_MCU_CFG_WM_WA_ADDR, val);
  out:
  \trelease_firmware(fw);
 """
 
 
-    if old not in src:
+# ============================================================
+# 检查原始结构
+# ============================================================
 
-        print(
-            "  [ERROR] 找不到旧版 942 第 3 个 hunk"
-        )
+if old not in src:
 
-        print()
-        print(
-            "  当前 LEDE 的 942 补丁结构可能已经发生变化。"
-        )
+    print("  [ERROR] 找不到 LEDE 原始 942 第 3 个 hunk")
 
-        print(
-            "  为避免错误修改内核补丁，本次停止编译。"
-        )
+    print()
+    print("  当前 942 补丁结构与预期不同。")
+    print("  为避免破坏内核补丁，本次停止编译。")
 
-        raise SystemExit(1)
+    raise SystemExit(1)
 
 
-    src = src.replace(
-        old,
-        new,
-        1
-    )
+# ============================================================
+# 替换
+# ============================================================
+
+src = src.replace(
+    old,
+    new,
+    1
+)
 
 
-    PATCH.write_text(
-        src,
-        encoding="utf-8"
-    )
+# ============================================================
+# 写回
+# ============================================================
+
+PATCH.write_text(
+    src,
+    encoding="utf-8"
+)
 
 
-    print(
-        "  ✓ 942 第 3 个 hunk 已更新"
-    )
+print("  ✓ 942 第 3 个 hunk 已适配 Linux 6.18.45")
+print("  ✓ 仅修复 wo_r32 / wo_w32 参数")
+print("  ✓ 保留 Linux 6.18 WED v3 原有判断")
+print("  ✓ Patch 格式保持标准 unified diff")
 
-    print(
-        "  ✓ 已加入 Linux 6.18 WED v3 判断"
-    )
+PYEOF
 
-    print(
-        "  ✓ 已保留 cpuboot / boot_regmap 功能"
-    )
+fi
 
 
-print(
-    ">>> MediaTek WED 942 兼容修复完成"
+echo
+echo "============================================================"
+echo ">>> WED 942 补丁最终检查"
+echo "============================================================"
+
+if [ -f "$WED_PATCH" ]; then
+
+    echo "── Patch 文件前 100 行检查 ──"
+
+    sed -n '1,100p' "$WED_PATCH"
+
+    echo
+    echo "── Patch 基本格式检查 ──"
+
+    if grep -q '^--- a/drivers/net/ethernet/mediatek/mtk_wed_mcu.c' "$WED_PATCH" \
+       && grep -q '^+++ b/drivers/net/ethernet/mediatek/mtk_wed_mcu.c' "$WED_PATCH" \
+       && grep -q '^--- a/drivers/net/ethernet/mediatek/mtk_wed_wo.h' "$WED_PATCH" \
+       && grep -q '^+++ b/drivers/net/ethernet/mediatek/mtk_wed_wo.h' "$WED_PATCH"; then
+
+        echo "  ✓ 942 Patch 文件格式正常"
+
+    else
+
+        echo "  ❌ 942 Patch 文件格式异常"
+
+        exit 1
+
+    fi
+
+fi
+
+echo
+echo ">>> MediaTek WED 942 兼容修复完成"
 )
 
 PYEOF
