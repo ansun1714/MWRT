@@ -212,9 +212,17 @@ for f in TARGET_FILES:
     fix(f)
 print('>>> [Fix-3] 完成')
 PYEOF
-
+# ─── 克隆 songloft-for-router OpenWrt 包 ─────────────────
+git clone --depth=1 \
+    https://github.com/songloft-org/songloft-for-router.git \
+    /tmp/songloft-for-router
+cp -r /tmp/songloft-for-router/openwrt/songloft \
+    package/songloft
+cp -r /tmp/songloft-for-router/openwrt/luci-app-songloft \
+    package/luci-app-songloft
+rm -rf /tmp/songloft-for-router
+echo ">>> songloft 包已加入编译环境"
 # ─── 完成 ────────────────────────────────────────────────
-
 echo ""
 echo "✅ 软件源配置完成"
 echo ""
