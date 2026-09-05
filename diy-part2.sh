@@ -10,7 +10,24 @@ echo "========================================"
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/config
 mkdir -p files/etc/init.d
+# ═══════════════════════════════════════════════════════
+# Linux 6.18 Crypto 兼容
+# ═══════════════════════════════════════════════════════
 
+echo ">>> [Crypto] 修复 Linux 6.18 ChaCha20-Poly1305 依赖..."
+
+cat >> .config << 'EOF'
+
+CONFIG_PACKAGE_kmod-crypto-hash=y
+CONFIG_PACKAGE_kmod-crypto-aead=y
+CONFIG_PACKAGE_kmod-crypto-manager=y
+CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
+CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
+EOF
+
+echo ">>> [Crypto] 完成"
 # ════════════════════════════════════════════
 # 通用设置（所有设备共享）
 # ════════════════════════════════════════════
