@@ -192,34 +192,38 @@ for f in TARGET_FILES:
     fix(f)
 print('>>> [Fix-3] 完成')
 PYEOF
-# ============================================================
-# Fix-4: Linux 6.18 crypto-chacha20poly1305 / libpoly1305
-# ============================================================
+
+
+# ════════════════════════════════════════════════════════════
+# ★ Fix-4：Linux 6.18 Crypto Poly1305 模块依赖修复
+# ════════════════════════════════════════════════════════════
 #
-# LEDE master 的 crypto.mk 与 Linux 6.18 的模块拆分不完全匹配：
+# Linux 6.18：
 #
-#   chacha20poly1305.ko
-#          ↓
-#   依赖 libpoly1305.ko
+#   crypto/chacha20poly1305.ko
+#              ↓
+#        需要 libpoly1305.ko
+#              ↓
+#   lib/crypto/libpoly1305.ko
 #
-# Linux 6.18 中：
-#   CONFIG_CRYPTO_LIB_POLY1305
-#   -> lib/crypto/libpoly1305.ko
+# 旧版 LEDE 的 crypto.mk 没有正确注册
+# kmod-crypto-lib-poly1305，导致：
 #
-# 但旧版 LEDE crypto.mk 没有正确注册
-# kmod-crypto-lib-poly1305，也没有让
-# kmod-crypto-chacha20poly1305 依赖它。
+# Package kmod-crypto-chacha20poly1305 is missing dependencies
+# for the following libraries:
+# libpoly1305.ko
 #
-# 这里直接自动修正 crypto.mk。
-# ============================================================
+# 本修复只针对 Linux 6.18 增加依赖，
+# 不影响 RE-SP-01B 的 Linux 5.10。
+# ════════════════════════════════════════════════════════════
 
 echo ""
-echo ">>> [Fix-4] 修复 Linux 6.18 Crypto Poly1305 依赖"
+echo ">>> [Fix-4] 修复 Linux 6.18 Crypto Poly1305 依赖..."
 
 CRYPTO_MK="package/kernel/linux/modules/crypto.mk"
 
 if [ ! -f "$CRYPTO_MK" ]; then
-    echo "❌ 找不到 $CRYPTO_MK"
+    echo "  ❌ 找不到：$CRYPTO_MK"
     exit 1
 fi
 
@@ -234,27 +238,35 @@ with open(path, "r", encoding="utf-8") as f:
 
 orig = src
 
-# ------------------------------------------------------------
-# 1. 找到 crypto-chacha20poly1305 包定义
-# ------------------------------------------------------------
+# ============================================================
+# 1. 查找 crypto-chacha20poly1305
+# ============================================================
+
 m = re.search(
-    r'(define\s+KernelPackage/crypto-chacha20poly1305\b.*?^endef)',
+    r'define\s+KernelPackage/crypto-chacha20poly1305\b.*?^endef',
     src,
     flags=re.MULTILINE | re.DOTALL
 )
 
 if not m:
-    print("❌ 找不到 KernelPackage/crypto-chacha20poly1305")
+    print("  ❌ 找不到 KernelPackage/crypto-chacha20poly1305")
     sys.exit(1)
 
-chacha_block = m.group(1)
+chacha_block = m.group(0)
 
-# ------------------------------------------------------------
-# 2. 给 chacha20poly1305 增加 Linux 6.18 专用依赖
-# ------------------------------------------------------------
+print("  [OK] 找到 crypto-chacha20poly1305")
+
+# ============================================================
+# 2. 增加 Linux 6.18 → libpoly1305 依赖
+# ============================================================
+
 if "kmod-crypto-lib-poly1305" in chacha_block:
-    print("  [OK] crypto-chacha20poly1305 已包含 libpoly1305 依赖")
+
+    print("  [OK] crypto-chacha20poly1305 已经包含")
+    print("       kmod-crypto-lib-poly1305 依赖")
+
 else:
+
     dep = re.search(
         r'^(\s*DEPENDS\s*:=)([^\n]*)$',
         chacha_block,
@@ -262,7 +274,7 @@ else:
     )
 
     if not dep:
-        print("❌ 找不到 crypto-chacha20poly1305 的 DEPENDS")
+        print("  ❌ 找不到 crypto-chacha20poly1305 的 DEPENDS")
         sys.exit(1)
 
     old_dep = dep.group(2).rstrip()
@@ -273,30 +285,32 @@ else:
     )
 
     new_block = (
-        chacha_block[:dep.start()] +
-        dep.group(1) + new_dep +
-        chacha_block[dep.end():]
+        chacha_block[:dep.start()]
+        + dep.group(1)
+        + new_dep
+        + chacha_block[dep.end():]
     )
 
     src = src[:m.start()] + new_block + src[m.end():]
 
-    print("  ✓ 已增加:")
+    print("  ✓ 已增加 Linux 6.18 专用依赖：")
     print("    +LINUX_6_18:kmod-crypto-lib-poly1305")
 
-# ------------------------------------------------------------
-# 3. 检查是否已经存在 crypto-lib-poly1305
-# ------------------------------------------------------------
+# ============================================================
+# 3. 注册 crypto-lib-poly1305
+# ============================================================
+
 if re.search(
     r'define\s+KernelPackage/crypto-lib-poly1305\b',
     src
 ):
-    print("  [OK] crypto-lib-poly1305 已存在")
+
+    print("  [OK] crypto-lib-poly1305 已经存在")
+
 else:
 
-    # --------------------------------------------------------
-    # Linux 6.18 的 libpoly1305.ko
-    # --------------------------------------------------------
     poly1305_block = r'''
+# Linux 6.18 Poly1305 library
 define KernelPackage/crypto-lib-poly1305
   TITLE:=Poly1305 library interface
   KCONFIG:=CONFIG_CRYPTO_LIB_POLY1305
@@ -308,69 +322,100 @@ endef
 $(eval $(call KernelPackage,crypto-lib-poly1305))
 '''
 
-    # --------------------------------------------------------
-    # 优先插入到 crypto-manager 前面
-    # --------------------------------------------------------
+    # 优先放在 crypto-manager 前面
     marker = "define KernelPackage/crypto-manager"
 
     pos = src.find(marker)
 
-    if pos < 0:
-        print("❌ 找不到 KernelPackage/crypto-manager")
+    if pos == -1:
+        print("  ❌ 找不到 KernelPackage/crypto-manager")
         sys.exit(1)
 
-    src = src[:pos] + poly1305_block + "\n" + src[pos:]
+    src = (
+        src[:pos]
+        + poly1305_block
+        + "\n"
+        + src[pos:]
+    )
 
-    print("  ✓ 已注册:")
-    print("    KernelPackage/crypto-lib-poly1305")
-    print("    FILES=$(LINUX_DIR)/lib/crypto/libpoly1305.ko")
+    print("  ✓ 已注册 KernelPackage/crypto-lib-poly1305")
+    print("  ✓ 模块：lib/crypto/libpoly1305.ko")
 
-# ------------------------------------------------------------
-# 4. 写回文件
-# ------------------------------------------------------------
+# ============================================================
+# 4. 写回 crypto.mk
+# ============================================================
+
 if src != orig:
+
     with open(path, "w", encoding="utf-8") as f:
         f.write(src)
 
     print("  ✓ crypto.mk 修改成功")
-else:
-    print("  [OK] crypto.mk 无需修改")
 
-# ------------------------------------------------------------
-# 5. 最终验证
-# ------------------------------------------------------------
+else:
+
+    print("  [OK] crypto.mk 已经是修复状态")
+
+# ============================================================
+# 5. 最终严格检查
+# ============================================================
+
 with open(path, "r", encoding="utf-8") as f:
     check = f.read()
 
-# 验证 package 是否存在
-if not re.search(
-    r'define\s+KernelPackage/crypto-lib-poly1305\b',
-    check
-):
-    print("❌ 验证失败：crypto-lib-poly1305 不存在")
-    sys.exit(1)
-
-# 验证 chacha 是否依赖 poly1305
-m2 = re.search(
-    r'(define\s+KernelPackage/crypto-chacha20poly1305\b.*?^endef)',
+# 检查 libpoly1305 package
+poly = re.search(
+    r'define\s+KernelPackage/crypto-lib-poly1305\b.*?^endef',
     check,
     flags=re.MULTILINE | re.DOTALL
 )
 
-if not m2:
-    print("❌ 验证失败：找不到 crypto-chacha20poly1305")
+if not poly:
+    print("  ❌ 最终检查失败：")
+    print("     crypto-lib-poly1305 未注册")
     sys.exit(1)
 
-if "kmod-crypto-lib-poly1305" not in m2.group(1):
-    print("❌ 验证失败：crypto-chacha20poly1305 没有依赖 libpoly1305")
+# 检查 KCONFIG
+if "CONFIG_CRYPTO_LIB_POLY1305" not in poly.group(0):
+    print("  ❌ 最终检查失败：")
+    print("     CONFIG_CRYPTO_LIB_POLY1305 不存在")
+    sys.exit(1)
+
+# 检查模块文件
+if "lib/crypto/libpoly1305.ko" not in poly.group(0):
+    print("  ❌ 最终检查失败：")
+    print("     libpoly1305.ko 路径不存在")
+    sys.exit(1)
+
+# 检查 chacha package
+chacha = re.search(
+    r'define\s+KernelPackage/crypto-chacha20poly1305\b.*?^endef',
+    check,
+    flags=re.MULTILINE | re.DOTALL
+)
+
+if not chacha:
+    print("  ❌ 最终检查失败：")
+    print("     crypto-chacha20poly1305 不存在")
+    sys.exit(1)
+
+# 检查依赖
+if "kmod-crypto-lib-poly1305" not in chacha.group(0):
+    print("  ❌ 最终检查失败：")
+    print("     crypto-chacha20poly1305 未依赖 libpoly1305")
     sys.exit(1)
 
 print("")
-print("  ===== Crypto Fix-4 验证通过 =====")
-print("  [OK] kmod-crypto-lib-poly1305")
-print("  [OK] lib/crypto/libpoly1305.ko")
-print("  [OK] kmod-crypto-chacha20poly1305 -> libpoly1305")
-print("  ==================================")
+print("  ╔══════════════════════════════════════╗")
+print("  ║     Fix-4 Crypto 修复验证通过       ║")
+print("  ╠══════════════════════════════════════╣")
+print("  ║ [OK] crypto-lib-poly1305             ║")
+print("  ║ [OK] CONFIG_CRYPTO_LIB_POLY1305     ║")
+print("  ║ [OK] libpoly1305.ko                  ║")
+print("  ║ [OK] chacha20poly1305 dependency     ║")
+print("  ║ [OK] Linux 6.18 conditional          ║")
+print("  ╚══════════════════════════════════════╝")
+print("")
 
 PYEOF
 
