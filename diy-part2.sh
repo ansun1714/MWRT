@@ -15,12 +15,30 @@ mkdir -p files/etc/init.d
 # ═══════════════════════════════════════════════════════
 
 echo ">>> [Crypto] 修复 Linux 6.18 ChaCha20-Poly1305 依赖..."
-echo ">>> [ovpn-dco] Linux 6.18 不编译外置 ovpn-dco（recvmsg 签名不兼容）..."
+echo ">>> [ovpn-dco] 强制关闭 OpenVPN DCO（6.18 外置模块编不过）..."
 
-# 清掉配置里可能已经选中的 ovpn-dco / DCO
+# 1. 改 OpenVPN 源码：默认 DCO=n，防止 make defconfig 又打开
+for f in feeds/packages/net/openvpn/Config-*.in; do
+  [ -f "$f" ] || continue
+  sed -i 's/default y if ! OPENVPN_[a-z]*_ENABLE_IPROUTE2/default n/' "$f"
+  echo "  ✓ 已改 $f"
+done
+
+# 2. 从 OpenVPN 依赖里拿掉 kmod-ovpn-*（$(1) 必须单引号，不能被 bash 展开）
+if [ -f feeds/packages/net/openvpn/Makefile ]; then
+  sed -i \
+    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco-v2//' \
+    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-backports//' \
+    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco//' \
+    feeds/packages/net/openvpn/Makefile
+  echo "  ✓ 已从 openvpn Makefile 移除 kmod-ovpn 依赖"
+fi
+
+# 3. 清掉 .config 里的 ovpn-dco / 错误 wpad 名
 sed -i \
   -e '/^CONFIG_PACKAGE_kmod-ovpn/d' \
   -e '/^CONFIG_OPENVPN_.*ENABLE_DCO=/d' \
+  -e '/wpad-openssl-mbedtls/d' \
   .config
 
 cat >> .config << 'EOF'
@@ -36,6 +54,7 @@ CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
 # CONFIG_PACKAGE_kmod-ovpn-dco-v2 is not set
 # CONFIG_PACKAGE_kmod-ovpn-backports is not set
 # CONFIG_OPENVPN_openssl_ENABLE_DCO is not set
+CONFIG_PACKAGE_wpad-openssl=y
 EOF
 
 echo ">>> [Crypto/ovpn-dco] 完成"
