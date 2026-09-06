@@ -11,10 +11,17 @@ mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/config
 mkdir -p files/etc/init.d
 # ═══════════════════════════════════════════════════════
-# Linux 6.18 Crypto 兼容
+# Linux 6.18 Crypto / ovpn-dco 兼容
 # ═══════════════════════════════════════════════════════
 
 echo ">>> [Crypto] 修复 Linux 6.18 ChaCha20-Poly1305 依赖..."
+echo ">>> [ovpn-dco] Linux 6.18 不编译外置 ovpn-dco（recvmsg 签名不兼容）..."
+
+# 清掉配置里可能已经选中的 ovpn-dco / DCO
+sed -i \
+  -e '/^CONFIG_PACKAGE_kmod-ovpn/d' \
+  -e '/^CONFIG_OPENVPN_.*ENABLE_DCO=/d' \
+  .config
 
 cat >> .config << 'EOF'
 
@@ -25,9 +32,13 @@ CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
 CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
 CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
 CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
+# CONFIG_PACKAGE_kmod-ovpn-dco is not set
+# CONFIG_PACKAGE_kmod-ovpn-dco-v2 is not set
+# CONFIG_PACKAGE_kmod-ovpn-backports is not set
+# CONFIG_OPENVPN_openssl_ENABLE_DCO is not set
 EOF
 
-echo ">>> [Crypto] 完成"
+echo ">>> [Crypto/ovpn-dco] 完成"
 # ════════════════════════════════════════════
 # 通用设置（所有设备共享）
 # ════════════════════════════════════════════
@@ -362,4 +373,3 @@ esac
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
 echo "========================================"
-
