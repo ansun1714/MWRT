@@ -440,36 +440,21 @@ jobs:
 
 
       # ============================================================
-      # 11. 生成最终配置
-      # ============================================================
-
       - name: 📋 生成最终配置
-
         run: |
-
           cd openwrt
-
-
           make defconfig
-
-
+          # defconfig 会按默认值把 DCO 再打开，这里关死，不要再 defconfig
+          sed -i \
+            -e 's/^CONFIG_OPENVPN_.*ENABLE_DCO=y/# CONFIG_OPENVPN_openssl_ENABLE_DCO is not set/' \
+            -e 's/^CONFIG_PACKAGE_kmod-ovpn-.*=y/# CONFIG_PACKAGE_kmod-ovpn-dco is not set/' \
+            .config
           echo "── TARGET 配置 ──"
-
-
-          grep "CONFIG_TARGET_" .config \
-            | head -10 \
-            || true
-
-
+          grep "CONFIG_TARGET_" .config | head -10
           echo "── 内核版本 ──"
-
-
-          grep -E \
-            "LINUX_6|LINUX_5|TESTING_KERNEL" \
-            .config \
-            | head -10 \
-            || true
-
+          grep -E "LINUX_6|LINUX_5|TESTING_KERNEL" .config | head -5 || true
+          echo "── OpenVPN / ovpn / wpad ──"
+          grep -E "ovpn|OPENVPN|wpad" .config | head -30 || true
 
       # ============================================================
       # 12. 下载编译依赖
@@ -500,86 +485,27 @@ jobs:
       # ============================================================
 
       - name: 🔨 编译固件
-
-        id: compile
-
         run: |
-
           cd openwrt
-
-
-          echo "============================================================"
-
-          echo "              开始编译 MWRT 固件"
-
-          echo "============================================================"
-
-
-          echo "CPU 核心：$(nproc)"
-
-          echo
-
-          free -h
-
-
-          echo
-
-          echo "── 开始并行编译 ──"
-
-
-          set -o pipefail
-
-
-          if make -j$(nproc) V=s 2>&1 | tee /tmp/build.log; then
-
-            echo
-
-            echo "============================================================"
-
-            echo "✅ 并行编译成功"
-
-            echo "============================================================"
-
-          else
-
-            echo
-
-            echo "============================================================"
-
-            echo "❌ 并行编译失败"
-
-            echo "============================================================"
-
-
-            echo
-
-            echo "── 错误关键词 ──"
-
-
-            grep -E \
-              "Hunk .*FAILED|malformed patch|ERROR:|error:|Error:|FAILED|failed" \
-              /tmp/build.log \
-              | tail -100 \
-              || true
-
-
-            echo
-
-            echo "── 最后 200 行完整日志 ──"
-
-
-            tail -200 /tmp/build.log \
-              || true
-
-
-            echo
-
-            echo "❌ 编译失败，停止 Workflow"
-
-
-            exit 1
-
+          export PATH="/usr/lib/ccache:$PATH"
+          export CCACHE_DIR=\~/.ccache
+          ccache -s
+          if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
+            echo "🧹 Clean 模式：执行 make clean"
+            make clean
           fi
+          set +e
+          make -j$(nproc) V=s 2>&1 | tee /tmp/build.log
+          MAKE_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$MAKE_STATUS" -ne 0 ]; then
+            echo "======== Collected errors / 失败摘要 ========"
+            grep -nE "Collected errors|satisfy_dependencies|check_data_file_clashes|Cannot install|opkg_install|ERROR: package|incompatible|Error [0-9]" /tmp/build.log | tail -80 || true
+            echo "======== 日志尾部 ========"
+            tail -60 /tmp/build.log
+            exit 1
+          fi
+          ccache -s
 
 
       # ============================================================
