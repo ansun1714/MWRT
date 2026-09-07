@@ -11,39 +11,30 @@ mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/config
 mkdir -p files/etc/init.d
 
-# ═══════════════════════════════════════════════════════
-# Linux 6.18：禁止编译外置 ovpn-dco
-# 根因：ovpn-backports 的 recvmsg 还是 5 参数，6.18 内核是 4 参数
-# ═══════════════════════════════════════════════════════
+echo ">>> [ovpn-dco] 关闭 OpenVPN DCO..."
 
-echo ">>> [ovpn-dco] 关闭 OpenVPN DCO，并移除无法在 6.18 编译的外置模块..."
-
-# A. OpenVPN 默认 DCO=n，防止后面 make defconfig 再打开
 for f in feeds/packages/net/openvpn/Config-*.in; do
   [ -f "$f" ] || continue
   sed -i '/ENABLE_DCO/,+8 s/default y.*/default n/' "$f"
-  echo "  ✓ 已改 $f"
 done
 
-# B. 从 OpenVPN 依赖里拿掉 kmod-ovpn-*（单引号，$(1) 不能被 bash 展开）
 if [ -f feeds/packages/net/openvpn/Makefile ]; then
   sed -i \
     -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco-v2//' \
     -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-backports//' \
     -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco//' \
     feeds/packages/net/openvpn/Makefile
-  echo "  ✓ 已从 openvpn Makefile 移除 kmod-ovpn 依赖"
 fi
 
-# C. 直接删掉包，make 不可能再编译它
 rm -rf feeds/packages/kernel/ovpn-dco
 rm -rf package/feeds/packages/ovpn-dco
-echo "  ✓ 已删除 ovpn-dco 源码目录"
 
-# D. .config 关死（defconfig 之后 workflow 还会再关一次）
 sed -i \
   -e '/^CONFIG_PACKAGE_kmod-ovpn/d' \
   -e '/^CONFIG_OPENVPN_.*ENABLE_DCO=/d' \
+  -e '/^CONFIG_PACKAGE_luci-app-webdav=/d' \
+  -e '/^CONFIG_PACKAGE_nginx-mod-dav-ext=/d' \
+  -e '/^CONFIG_PACKAGE_luci-i18n-webdav/d' \
   .config
 
 cat >> .config << 'EOF'
@@ -58,13 +49,11 @@ CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
 # CONFIG_PACKAGE_kmod-ovpn-dco-v2 is not set
 # CONFIG_PACKAGE_kmod-ovpn-backports is not set
 # CONFIG_OPENVPN_openssl_ENABLE_DCO is not set
+# CONFIG_PACKAGE_luci-app-webdav is not set
+# CONFIG_PACKAGE_nginx-mod-dav-ext is not set
 EOF
 
 echo ">>> [ovpn-dco] 完成"
-
-# ════════════════════════════════════════════
-# 通用设置（所有设备共享）
-# ════════════════════════════════════════════
 
 case "$DEVICE" in
   wh3000)    HOSTNAME="WH3000" ;;
@@ -82,20 +71,16 @@ uci commit system
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/01-system
-echo ">>> [1] 主机名：${HOSTNAME}"
 
 sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
   package/lean/default-settings/files/zzz-default-settings 2>/dev/null
-echo ">>> [2] 默认主题修改完成"
 
 find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
-echo ">>> [3] Lucky 权限修复完成"
 
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
 net.ipv4.tcp_congestion_control=bbr
 EOF
-echo ">>> [8] sysctl 优化完成"
 
 cat > files/etc/config/msd_lite << 'EOF'
 config msd_lite 'config'
@@ -107,7 +92,6 @@ config msd_lite 'config'
 	option buffer '16384'
 	option rejointime '0'
 EOF
-echo ">>> [9-1] msd_lite UCI 配置写入完成"
 
 cat > files/etc/init.d/msd_lite << 'INITEOF'
 #!/bin/sh /etc/rc.common
@@ -195,65 +179,34 @@ reload_service() { stop; start; }
 service_triggers() { procd_add_reload_trigger "msd_lite"; }
 INITEOF
 chmod +x files/etc/init.d/msd_lite
-echo ">>> [9-2] msd_lite 双后端 init.d 写入完成"
-
-# ════════════════════════════════════════════
-# 设备专属设置
-# ════════════════════════════════════════════
 
 case "$DEVICE" in
 
 wh3000|wh3000pro)
     echo ">>> 应用 WH3000/WH3000 Pro 专属配置..."
 
-    cat > files/etc/config/wireless << 'EOF'
-config wifi-device 'radio0'
-	option type 'mac80211'
-	option path 'platform/soc/18000000.wifi'
-	option band '2g'
-	option channel 'auto'
-	option htmode 'HT40'
-	option country 'CN'
-	option cell_density '0'
-	option disabled '0'
-
-config wifi-iface 'default_radio0'
-	option device 'radio0'
-	option network 'lan'
-	option mode 'ap'
-	option ssid 'Camera_mao'
-	option encryption 'psk2'
-	option key '18921500010'
-
-config wifi-device 'radio1'
-	option type 'mac80211'
-	option path 'platform/soc/18000000.wifi+1'
-	option band '5g'
-	option channel '36'
-	option htmode 'HE80'
-	option country 'CN'
-	option cell_density '0'
-	option disabled '0'
-
-config wifi-iface 'default_radio1'
-	option device 'radio1'
-	option network 'lan'
-	option mode 'ap'
-	option ssid '栋仔_5G'
-	option encryption 'psk2'
-	option key '18851575507'
-EOF
-    echo ">>> [4] WH3000 Pro WiFi 预配置完成"
-
-    cat > files/etc/uci-defaults/99-wifi-fast << 'EOF'
+    cat > files/etc/uci-defaults/99-wifi-ssid << 'EOF'
 #!/bin/sh
-rm -f /etc/uci-defaults/network
-rm -f /etc/uci-defaults/wireless
-wifi reload >/dev/null 2>&1
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  [ -d /sys/class/ieee80211/phy0 ] && break
+  sleep 1
+done
+[ -s /etc/config/wireless ] || wifi config
+uci -q set wireless.radio0.disabled='0'
+uci -q set wireless.radio0.country='CN'
+uci -q set wireless.default_radio0.ssid='Camera_mao'
+uci -q set wireless.default_radio0.encryption='psk2'
+uci -q set wireless.default_radio0.key='18921500010'
+uci -q set wireless.radio1.disabled='0'
+uci -q set wireless.radio1.country='CN'
+uci -q set wireless.default_radio1.ssid='栋仔_5G'
+uci -q set wireless.default_radio1.encryption='psk2'
+uci -q set wireless.default_radio1.key='18851575507'
+uci commit wireless
+wifi up
 exit 0
 EOF
-    chmod +x files/etc/uci-defaults/99-wifi-fast
-    echo ">>> [5] WiFi 首启优化完成"
+    chmod +x files/etc/uci-defaults/99-wifi-ssid
 
     cat > files/etc/config/fstab << 'EOF'
 config global
@@ -275,97 +228,44 @@ mkdir -p /mnt/mmcblk0p7/docker
 uci set dockerd.globals.data_root='/mnt/mmcblk0p7/docker'
 uci commit dockerd
 /etc/init.d/dockerd enable
-/etc/init.d/dockerd restart
 exit 0
 EOF
     chmod +x files/etc/uci-defaults/30-docker
-    echo ">>> [6] Docker 数据目录配置完成"
 
     cat > files/etc/banner << 'EOF'
- ____   ___  _ _  ____ _____ _      ___
-|  _ \ / _ \| \ | |/ ___|__ / / \  |_ _|
-| | | | | | | \| | |  _ / / / _ \  | |
-| |_| | |_| | |\ | |_| |/ /__/ ___ \ | |
-|____/ \___/|_| \_|\____/____/_/ \_\___|
-
 DONGZAI 固件工厂 · Huasifei WH3000 Pro
-Platform: MediaTek MT7981 · ARM · 512MB
+Platform: MediaTek MT7981 · ARM
 EOF
-    echo "========================================"
-    echo " WH3000 Pro 配置完成"
-    echo " 主机名    : WH3000-Pro"
-    echo " WiFi 2.4G : Camera_mao"
-    echo " WiFi 5G   : 栋仔_5G"
-    echo " Docker    : /mnt/mmcblk0p7/docker"
-    echo "========================================"
     ;;
 
 re-sp-01b)
     echo ">>> 应用 RE-SP-01B 专属配置..."
 
-    cat > files/etc/config/wireless << 'EOF'
-config wifi-device 'radio0'
-	option type 'mac80211'
-	option path 'pci0000:01/0000:01:00.0'
-	option band '2g'
-	option channel 'auto'
-	option htmode 'HT40'
-	option country 'CN'
-	option disabled '0'
-
-config wifi-iface 'default_radio0'
-	option device 'radio0'
-	option network 'lan'
-	option mode 'ap'
-	option ssid 'RE-SP-01B'
-	option encryption 'none'
-
-config wifi-device 'radio1'
-	option type 'mac80211'
-	option path 'pci0000:02/0000:02:00.0'
-	option band '5g'
-	option channel '36'
-	option htmode 'VHT80'
-	option country 'CN'
-	option disabled '0'
-
-config wifi-iface 'default_radio1'
-	option device 'radio1'
-	option network 'lan'
-	option mode 'ap'
-	option ssid 'RE-SP-01B_5G'
-	option encryption 'none'
-EOF
-    echo ">>> [4] RE-SP-01B WiFi 预配置完成"
-
-    cat > files/etc/rc.local << 'EOF'
+    cat > files/etc/uci-defaults/99-wifi-ssid << 'EOF'
 #!/bin/sh
-sleep 8 && wifi up >/dev/null 2>&1
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  [ -d /sys/class/ieee80211/phy0 ] && break
+  sleep 1
+done
+[ -s /etc/config/wireless ] || wifi config
+uci -q set wireless.radio0.disabled='0'
+uci -q set wireless.default_radio0.ssid='RE-SP-01B'
+uci -q set wireless.radio1.disabled='0'
+uci -q set wireless.default_radio1.ssid='RE-SP-01B_5G'
+uci commit wireless
+wifi up
 exit 0
 EOF
-    chmod +x files/etc/rc.local
-    echo ">>> [5] WiFi 首启修复完成"
+    chmod +x files/etc/uci-defaults/99-wifi-ssid
 
     cat > files/etc/banner << 'EOF'
- ____   ___  _ _  ____ _____ _      ___
-|  _ \ / _ \| \ | |/ ___|__ / / \  |_ _|
-| | | | | | | \| | |  _ / / / _ \  | |
-| |_| | |_| | |\ | |_| |/ /__/ ___ \ | |
-|____/ \___/|_| \_|\____/____/_/ \_\___|
-
 DONGZAI 固件工厂 · JDCloud RE-SP-01B
-Platform: MediaTek MT7621 · MIPS · 512MB
+Platform: MediaTek MT7621 · MIPS
 EOF
-    echo "========================================"
-    echo " RE-SP-01B 配置完成"
-    echo " 主机名    : RE-SP-01B"
-    echo " WiFi 2.4G : RE-SP-01B"
-    echo " WiFi 5G   : RE-SP-01B_5G"
-    echo "========================================"
     ;;
 
 esac
 
 echo "========================================"
-echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
+echo " DIY Part 2 全部完成"
 echo "========================================"
