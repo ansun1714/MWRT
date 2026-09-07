@@ -1,10 +1,10 @@
-name: 🏗️ MWRT-DONGZAI 固件编译(显示内核)
+name: MWRT-DONGZAI
 
 on:
   workflow_dispatch:
     inputs:
       device:
-        description: '📦 目标设备'
+        description: 'target device'
         required: true
         default: 'wh3000pro'
         type: choice
@@ -24,30 +24,10 @@ jobs:
       contents: write
 
     steps:
-      - name: 🎯 MWRT 固件工厂
-        run: |
-          cat << 'EOF'
-            ____   ___  _   _  ____ _____    _    ___
-           |  _ \ / _ \| \ | |/ ___|__  /  / \  |_ _|
-           | | | | | | |  \| | |  _ / /  / _ \  | |
-           | |_| | |_| | |\  | |_| |/ /__/ ___ \ | |
-           |____/ \___/|_| \_|\____/____/_/   \_\___|
-                  🏗️  固件工厂  ·  OpenWrt
-          EOF
-          DEVICE="${{ github.event.inputs.device }}"
-          case "$DEVICE" in
-            wh3000)     DNAME="华硅 WH3000" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
-            wh3000pro)  DNAME="华硅 WH3000 Pro" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
-            re-sp-01b)  DNAME="京东云无线宝 RE-SP-01B" ; DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC" ;;
-            *) echo "未知设备：$DEVICE"; exit 1 ;;
-          esac
-          echo "设备：$DNAME"
-          echo "规格：$DSPEC"
-
-      - name: 📥 检出仓库
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: 🧹 释放磁盘空间
+      - name: free disk
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           sudo docker image prune -a -f
@@ -56,7 +36,7 @@ jobs:
           sudo rm -f /swapfile
           df -h
 
-      - name: ⚙️ 初始化编译环境
+      - name: install tools
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
@@ -65,40 +45,37 @@ jobs:
             rsync unzip zlib1g-dev file wget curl ccache cmake ninja-build \
             jq rename libelf-dev device-tree-compiler patch
 
-      - name: 📦 克隆源码
-        run: |
-          git clone --depth=1 -b "$LEDE_BRANCH" "$LEDE_REPO" openwrt
-          git -C openwrt log --oneline -3
+      - name: clone lede
+        run: git clone --depth=1 -b "$LEDE_BRANCH" "$LEDE_REPO" openwrt
 
-      - name: 🔧 DIY Part 1 - 配置 Feeds
+      - name: diy part1
         run: |
           chmod +x diy-part1.sh
           cd openwrt
           ../diy-part1.sh
 
-      - name: 🔄 更新 & 安装 Feeds
+      - name: feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 🎛️ 加载设备配置
+      - name: load device config
         run: |
           DEVICE="${{ github.event.inputs.device }}"
           case "$DEVICE" in
             wh3000)    cp wh3000.config    openwrt/.config ;;
             wh3000pro) cp wh3000pro.config openwrt/.config ;;
             re-sp-01b) cp re-sp-01b.config openwrt/.config ;;
-            *) echo "未知设备：$DEVICE"; exit 1 ;;
+            *) exit 1 ;;
           esac
           if [ "$DEVICE" = "re-sp-01b" ]; then
             grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config > /tmp/.config_patched
             echo "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" >> /tmp/.config_patched
             cp /tmp/.config_patched openwrt/.config
           fi
-          grep "DEVICE_" openwrt/.config | grep -v "^#" || true
 
-      - name: 🐧 配置内核版本
+      - name: kernel
         run: |
           DEVICE="${{ github.event.inputs.device }}"
           sed -i \
@@ -116,53 +93,46 @@ jobs:
               printf '# CONFIG_TESTING_KERNEL is not set\n' >> openwrt/.config
               ;;
           esac
-          grep -E "CONFIG_TESTING_KERNEL|CONFIG_LINUX_6" openwrt/.config || true
 
-      - name: 🔧 DIY Part 2 - 文件定制
+      - name: diy part2
         run: |
           chmod +x diy-part2.sh
           cd openwrt
           export DEVICE="${{ github.event.inputs.device }}"
           ../diy-part2.sh
 
-      - name: 📋 生成最终配置
+      - name: defconfig
         run: |
           cd openwrt
           make defconfig
           sed -i \
             -e 's/^CONFIG_OPENVPN_.*ENABLE_DCO=y/# CONFIG_OPENVPN_openssl_ENABLE_DCO is not set/' \
             -e 's/^CONFIG_PACKAGE_kmod-ovpn-.*=y/# CONFIG_PACKAGE_kmod-ovpn-dco is not set/' \
+            -e 's/^CONFIG_PACKAGE_luci-app-webdav=y/# CONFIG_PACKAGE_luci-app-webdav is not set/' \
+            -e 's/^CONFIG_PACKAGE_nginx-mod-dav-ext=y/# CONFIG_PACKAGE_nginx-mod-dav-ext is not set/' \
             .config
           rm -rf feeds/packages/kernel/ovpn-dco package/feeds/packages/ovpn-dco
-          echo "── TARGET ──"
-          grep "CONFIG_TARGET_" .config | head -10 || true
-          echo "── OpenVPN / ovpn ──"
-          grep -E "ovpn|OPENVPN" .config | head -30 || true
 
-      - name: ⬇️ 下载编译依赖
+      - name: download
         run: |
           cd openwrt
           make download -j8
-          find dl -size -1024c -exec ls -l {} \; 2>/dev/null || true
 
-      - name: 🔨 编译固件
-        id: compile
+      - name: compile
         run: |
           cd openwrt
           set -o pipefail
-          if make -j$(nproc) V=s 2>&1 | tee /tmp/build.log; then
-            echo "并行编译成功"
+          if make -j$(nproc) 2>&1 | tee /tmp/build.log; then
+            echo "compile ok"
             cp -f /tmp/build.log "$GITHUB_WORKSPACE/build.log"
           else
-            echo "======== 失败摘要 ========"
-            grep -nE "Collected errors|satisfy_dependencies|check_data_file_clashes|Cannot install|opkg_install|ERROR: package|incompatible-pointer|ovpn-dco|Error [0-9]" /tmp/build.log | tail -80 || true
-            echo "======== 日志尾部 ========"
-            tail -80 /tmp/build.log || true
+            grep -nE "Collected errors|satisfy_dependencies|Cannot install|ERROR: package|ovpn-dco" /tmp/build.log | tail -50 || true
+            tail -50 /tmp/build.log || true
             cp -f /tmp/build.log "$GITHUB_WORKSPACE/build.log" || true
             exit 1
           fi
 
-      - name: 📋 上传失败编译日志
+      - name: upload fail log
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -171,64 +141,29 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-      - name: 🔍 获取完整内核版本
-        id: kernel
-        run: |
-          cd openwrt
-          KERNEL=$(make kernelversion 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-          if [ -z "$KERNEL" ]; then
-            KERNEL=$(find build_dir -type d -name "linux-*" 2>/dev/null | sed 's#^.*/linux-##' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 || echo "")
-          fi
-          if [ -z "$KERNEL" ]; then KERNEL="unknown"; fi
-          echo "kernel=$KERNEL" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "build_time=$(date '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
-          echo "完整内核版本 : $KERNEL"
-
-      - name: 📁 整理固件
-        id: organize
+      - name: pack firmware
         run: |
           mkdir -p upload
           find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" -o -name "*.tar" \) -exec cp {} upload/ \;
-          cd upload
-          for f in *; do
-            [ -f "$f" ] || continue
-            newname=$(echo "$f" | sed 's/openwrt/MWRT-DONGZAI/g; s/lede/MWRT-DONGZAI/g')
-            [ "$f" != "$newname" ] && mv "$f" "$newname"
-          done
-          ls -lh
-          if [ -z "$(ls -A .)" ]; then
-            echo "未找到固件文件"
+          ls -lh upload
+          if [ -z "$(ls -A upload)" ]; then
+            echo "no firmware"
             exit 1
           fi
 
-      - name: 📤 上传固件
+      - name: upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: firmware
           path: upload/
           retention-days: 30
 
-      - name: 🏷️ 生成 Release 标签
-        id: tag
-        run: |
-          DEVICE="${{ github.event.inputs.device }}"
-          KERNEL="${{ steps.kernel.outputs.kernel }}"
-          TAG="MWRT-DONGZAI-\( {DEVICE^^}-K \){KERNEL}-\( (date +'%Y.%m.%d')- \)(date +'%H%M')"
-          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "release_date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
-
-      - name: 🚀 发布到 Release
+      - name: github release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: "MWRT-DONGZAI ${{ github.event.inputs.device }} Linux ${{ steps.kernel.outputs.kernel }}"
+          tag_name: mwrt-${{ github.run_number }}
+          name: MWRT ${{ github.event.inputs.device }}
           files: upload/*
-          body: |
-            设备: ${{ github.event.inputs.device }}
-            内核: ${{ steps.kernel.outputs.kernel }}
-            提交: ${{ steps.kernel.outputs.commit }}
-            时间: ${{ steps.kernel.outputs.build_time }}
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
