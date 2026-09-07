@@ -488,12 +488,8 @@ jobs:
         run: |
           cd openwrt
           export PATH="/usr/lib/ccache:$PATH"
-          export CCACHE_DIR=\~/.ccache
+          export CCACHE_DIR=~/.ccache
           ccache -s
-          if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
-            echo "🧹 Clean 模式：执行 make clean"
-            make clean
-          fi
           set +e
           make -j$(nproc) V=s 2>&1 | tee /tmp/build.log
           MAKE_STATUS=${PIPESTATUS[0]}
