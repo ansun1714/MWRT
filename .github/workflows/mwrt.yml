@@ -39,14 +39,10 @@ jobs:
             wh3000)     DNAME="华硅 WH3000" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
             wh3000pro)  DNAME="华硅 WH3000 Pro" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
             re-sp-01b)  DNAME="京东云无线宝 RE-SP-01B" ; DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC" ;;
-            *) echo "❌ 未知设备：$DEVICE"; exit 1 ;;
+            *) echo "未知设备：$DEVICE"; exit 1 ;;
           esac
-          echo "  ┌─────────────────────────────────────────┐"
-          echo "  │  📦 设备：$DNAME"
-          echo "  │  🔧 规格：$DSPEC"
-          echo "  │  🕐 时间：$(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "  │  🔖 标识：MWRT-DONGZAI"
-          echo "  └─────────────────────────────────────────┘"
+          echo "设备：$DNAME"
+          echo "规格：$DSPEC"
 
       - name: 📥 检出仓库
         uses: actions/checkout@v4
@@ -58,7 +54,6 @@ jobs:
           sudo apt-get clean
           sudo swapoff -a || true
           sudo rm -f /swapfile
-          echo "── 当前磁盘空间 ──"
           df -h
 
       - name: ⚙️ 初始化编译环境
@@ -69,13 +64,10 @@ jobs:
             gettext git libncurses5-dev libssl-dev python3 python3-pyelftools \
             rsync unzip zlib1g-dev file wget curl ccache cmake ninja-build \
             jq rename libelf-dev device-tree-compiler patch
-          gcc --version | head -1
-          python3 --version
 
       - name: 📦 克隆源码
         run: |
           git clone --depth=1 -b "$LEDE_BRANCH" "$LEDE_REPO" openwrt
-          echo "── 源码最新提交 ──"
           git -C openwrt log --oneline -3
 
       - name: 🔧 DIY Part 1 - 配置 Feeds
@@ -93,18 +85,16 @@ jobs:
       - name: 🎛️ 加载设备配置
         run: |
           DEVICE="${{ github.event.inputs.device }}"
-          echo "── 加载配置：${DEVICE}.config ──"
           case "$DEVICE" in
             wh3000)    cp wh3000.config    openwrt/.config ;;
             wh3000pro) cp wh3000pro.config openwrt/.config ;;
             re-sp-01b) cp re-sp-01b.config openwrt/.config ;;
-            *) echo "❌ 未知设备：$DEVICE"; exit 1 ;;
+            *) echo "未知设备：$DEVICE"; exit 1 ;;
           esac
           if [ "$DEVICE" = "re-sp-01b" ]; then
             grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config > /tmp/.config_patched
             echo "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" >> /tmp/.config_patched
             cp /tmp/.config_patched openwrt/.config
-            echo "✅ RE-SP-01B 设备目标已修正"
           fi
           grep "DEVICE_" openwrt/.config | grep -v "^#" || true
 
@@ -125,7 +115,6 @@ jobs:
             re-sp-01b)
               printf '# CONFIG_TESTING_KERNEL is not set\n' >> openwrt/.config
               ;;
-            *) echo "❌ 未知设备"; exit 1 ;;
           esac
           grep -E "CONFIG_TESTING_KERNEL|CONFIG_LINUX_6" openwrt/.config || true
 
@@ -140,7 +129,6 @@ jobs:
         run: |
           cd openwrt
           make defconfig
-          # defconfig 会按 OpenVPN 默认值把 DCO 再打开，这里关死，不要再 defconfig
           sed -i \
             -e 's/^CONFIG_OPENVPN_.*ENABLE_DCO=y/# CONFIG_OPENVPN_openssl_ENABLE_DCO is not set/' \
             -e 's/^CONFIG_PACKAGE_kmod-ovpn-.*=y/# CONFIG_PACKAGE_kmod-ovpn-dco is not set/' \
@@ -148,9 +136,7 @@ jobs:
           rm -rf feeds/packages/kernel/ovpn-dco package/feeds/packages/ovpn-dco
           echo "── TARGET ──"
           grep "CONFIG_TARGET_" .config | head -10 || true
-          echo "── 内核 ──"
-          grep -E "LINUX_6|LINUX_5|TESTING_KERNEL" .config | head -10 || true
-          echo "── OpenVPN / ovpn（应该看不到 =y 的 kmod-ovpn）──"
+          echo "── OpenVPN / ovpn ──"
           grep -E "ovpn|OPENVPN" .config | head -30 || true
 
       - name: ⬇️ 下载编译依赖
@@ -163,16 +149,16 @@ jobs:
         id: compile
         run: |
           cd openwrt
-          echo "CPU 核心：$(nproc)"
-          free -h
           set -o pipefail
           if make -j$(nproc) V=s 2>&1 | tee /tmp/build.log; then
-            echo "✅ 并行编译成功"
+            echo "并行编译成功"
+            cp -f /tmp/build.log "$GITHUB_WORKSPACE/build.log"
           else
-            echo "======== Collected errors / 失败摘要 ========"
+            echo "======== 失败摘要 ========"
             grep -nE "Collected errors|satisfy_dependencies|check_data_file_clashes|Cannot install|opkg_install|ERROR: package|incompatible-pointer|ovpn-dco|Error [0-9]" /tmp/build.log | tail -80 || true
             echo "======== 日志尾部 ========"
             tail -80 /tmp/build.log || true
+            cp -f /tmp/build.log "$GITHUB_WORKSPACE/build.log" || true
             exit 1
           fi
 
@@ -180,10 +166,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: MWRT-build-log-\( {{ github.event.inputs.device }}- \){{ github.run_number }}
-          path: |
-            /tmp/build.log
-            openwrt/tmp/
+          name: build-log
+          path: build.log
           retention-days: 14
           if-no-files-found: ignore
 
@@ -195,10 +179,7 @@ jobs:
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find build_dir -type d -name "linux-*" 2>/dev/null | sed 's#^.*/linux-##' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 || echo "")
           fi
-          if [ -z "$KERNEL" ]; then
-            MAJOR_MINOR=$(grep "^CONFIG_LINUX_[0-9_]*=y" .config | head -1 | sed 's/CONFIG_LINUX_//' | sed 's/=y//' | tr '_' '.')
-            [ -n "\( MAJOR_MINOR" ] && KERNEL=" \){MAJOR_MINOR}.*" || KERNEL="Unknown"
-          fi
+          if [ -z "$KERNEL" ]; then KERNEL="unknown"; fi
           echo "kernel=$KERNEL" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           echo "build_time=$(date '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
@@ -217,14 +198,14 @@ jobs:
           done
           ls -lh
           if [ -z "$(ls -A .)" ]; then
-            echo "❌ 未找到固件文件"
+            echo "未找到固件文件"
             exit 1
           fi
 
-      - name: 📤 上传 Artifact
+      - name: 📤 上传固件
         uses: actions/upload-artifact@v4
         with:
-          name: MWRT-DONGZAI_\( {{ github.event.inputs.device }}_K \){{ steps.kernel.outputs.kernel }}_${{ github.run_number }}
+          name: firmware
           path: upload/
           retention-days: 30
 
@@ -236,32 +217,18 @@ jobs:
           TAG="MWRT-DONGZAI-\( {DEVICE^^}-K \){KERNEL}-\( (date +'%Y.%m.%d')- \)(date +'%H%M')"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
-          echo "生成 Tag：$TAG"
 
       - name: 🚀 发布到 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: "🏗️ MWRT-DONGZAI · ${{ github.event.inputs.device }} · Linux ${{ steps.kernel.outputs.kernel }}"
+          name: "MWRT-DONGZAI ${{ github.event.inputs.device }} Linux ${{ steps.kernel.outputs.kernel }}"
           files: upload/*
           body: |
-            ## 🏗️ MWRT 固件工厂
-            | 项目 | 内容 |
-            |---|---|
-            | 📦 设备 | ${{ github.event.inputs.device }} |
-            | 🐧 Linux 内核 | ${{ steps.kernel.outputs.kernel }} |
-            | 🔖 MWRT Commit | ${{ steps.kernel.outputs.commit }} |
-            | 🕐 编译时间 | ${{ steps.kernel.outputs.build_time }} |
-            | 📅 编译日期 | ${{ steps.tag.outputs.release_date }} |
-            | 🔖 标识 | MWRT-DONGZAI |
-
-            ### 固件文件
-            | 文件 | 用途 |
-            |---|---|
-            | `*-initramfs-kernel.bin` | 首次刷机 / TFTP |
-            | `*-squashfs-sysupgrade.bin` | ✅ 日常升级 |
-
-            OpenVPN 用户态可用，Linux 6.18 外置 ovpn-dco 已关闭（内核已内置 ovpn）。
+            设备: ${{ github.event.inputs.device }}
+            内核: ${{ steps.kernel.outputs.kernel }}
+            提交: ${{ steps.kernel.outputs.commit }}
+            时间: ${{ steps.kernel.outputs.build_time }}
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
