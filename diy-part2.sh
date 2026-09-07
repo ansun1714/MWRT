@@ -10,59 +10,11 @@ echo "========================================"
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/config
 mkdir -p files/etc/init.d
-# ═══════════════════════════════════════════════════════
-# Linux 6.18 Crypto / ovpn-dco 兼容
-# ═══════════════════════════════════════════════════════
 
-echo ">>> [Crypto] 修复 Linux 6.18 ChaCha20-Poly1305 依赖..."
-echo ">>> [ovpn-dco] 强制关闭 OpenVPN DCO（6.18 外置模块编不过）..."
-
-# 1. 改 OpenVPN 源码：默认 DCO=n，防止 make defconfig 又打开
-for f in feeds/packages/net/openvpn/Config-*.in; do
-  [ -f "$f" ] || continue
-  sed -i 's/default y if ! OPENVPN_[a-z]*_ENABLE_IPROUTE2/default n/' "$f"
-  echo "  ✓ 已改 $f"
-done
-
-# 2. 从 OpenVPN 依赖里拿掉 kmod-ovpn-*（$(1) 必须单引号，不能被 bash 展开）
-if [ -f feeds/packages/net/openvpn/Makefile ]; then
-  sed -i \
-    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco-v2//' \
-    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-backports//' \
-    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco//' \
-    feeds/packages/net/openvpn/Makefile
-  echo "  ✓ 已从 openvpn Makefile 移除 kmod-ovpn 依赖"
-fi
-
-# 3. 清掉 .config 里的 ovpn-dco / 错误 wpad 名
-sed -i \
-  -e '/^CONFIG_PACKAGE_kmod-ovpn/d' \
-  -e '/^CONFIG_OPENVPN_.*ENABLE_DCO=/d' \
-  -e '/wpad-openssl-mbedtls/d' \
-  .config
-
-cat >> .config << 'EOF'
-
-CONFIG_PACKAGE_kmod-crypto-hash=y
-CONFIG_PACKAGE_kmod-crypto-aead=y
-CONFIG_PACKAGE_kmod-crypto-manager=y
-CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
-CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
-# CONFIG_PACKAGE_kmod-ovpn-dco is not set
-# CONFIG_PACKAGE_kmod-ovpn-dco-v2 is not set
-# CONFIG_PACKAGE_kmod-ovpn-backports is not set
-# CONFIG_OPENVPN_openssl_ENABLE_DCO is not set
-CONFIG_PACKAGE_wpad-openssl=y
-EOF
-
-echo ">>> [Crypto/ovpn-dco] 完成"
 # ════════════════════════════════════════════
 # 通用设置（所有设备共享）
 # ════════════════════════════════════════════
 
-# ── 1. 主机名（以型号命名）─────────────────
 case "$DEVICE" in
   wh3000)    HOSTNAME="WH3000" ;;
   wh3000pro) HOSTNAME="WH3000-Pro" ;;
@@ -81,23 +33,19 @@ EOF
 chmod +x files/etc/uci-defaults/01-system
 echo ">>> [1] 主机名：${HOSTNAME}"
 
-# ── 2. 默认主题 ─────────────────────────────
 sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
   package/lean/default-settings/files/zzz-default-settings 2>/dev/null
 echo ">>> [2] 默认主题修改完成"
 
-# ── 3. Lucky 权限 ────────────────────────────
 find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
 echo ">>> [3] Lucky 权限修复完成"
 
-# ── 8. 系统网络优化 ──────────────────────────
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
 net.ipv4.tcp_congestion_control=bbr
 EOF
 echo ">>> [8] sysctl 优化完成"
 
-# ── 9-1. msd_lite 默认 UCI 配置 ─────────────
 cat > files/etc/config/msd_lite << 'EOF'
 config msd_lite 'config'
 	option enable '0'
@@ -110,7 +58,6 @@ config msd_lite 'config'
 EOF
 echo ">>> [9-1] msd_lite UCI 配置写入完成"
 
-# ── 9-2. msd_lite 双后端 init.d ──────────────
 cat > files/etc/init.d/msd_lite << 'INITEOF'
 #!/bin/sh /etc/rc.common
 START=99
@@ -193,14 +140,8 @@ RTPEOF
     procd_close_instance
 }
 
-reload_service() {
-    stop
-    start
-}
-
-service_triggers() {
-    procd_add_reload_trigger "msd_lite"
-}
+reload_service() { stop; start; }
+service_triggers() { procd_add_reload_trigger "msd_lite"; }
 INITEOF
 chmod +x files/etc/init.d/msd_lite
 echo ">>> [9-2] msd_lite 双后端 init.d 写入完成"
@@ -211,13 +152,9 @@ echo ">>> [9-2] msd_lite 双后端 init.d 写入完成"
 
 case "$DEVICE" in
 
-# ──────────────────────────────────────────
-# WH3000 / WH3000 Pro（MT7981 ARM Filogic）
-# ──────────────────────────────────────────
 wh3000|wh3000pro)
     echo ">>> 应用 WH3000/WH3000 Pro 专属配置..."
 
-    # 4. WiFi 预配置（MT7981 Filogic 专用路径）
     cat > files/etc/config/wireless << 'EOF'
 config wifi-device 'radio0'
 	option type 'mac80211'
@@ -257,7 +194,6 @@ config wifi-iface 'default_radio1'
 EOF
     echo ">>> [4] WH3000 Pro WiFi 预配置完成"
 
-    # 5. WiFi 首启优化
     cat > files/etc/uci-defaults/99-wifi-fast << 'EOF'
 #!/bin/sh
 rm -f /etc/uci-defaults/network
@@ -268,7 +204,6 @@ EOF
     chmod +x files/etc/uci-defaults/99-wifi-fast
     echo ">>> [5] WiFi 首启优化完成"
 
-    # 6. Docker 数据目录（WH3000 Pro eMMC 专用分区）
     cat > files/etc/config/fstab << 'EOF'
 config global
 	option anon_mount '1'
@@ -293,9 +228,8 @@ uci commit dockerd
 exit 0
 EOF
     chmod +x files/etc/uci-defaults/30-docker
-    echo ">>> [6] Docker 数据目录配置完成（/mnt/mmcblk0p7）"
+    echo ">>> [6] Docker 数据目录配置完成"
 
-    # Banner
     cat > files/etc/banner << 'EOF'
  ____   ___  _ _  ____ _____ _      ___
 |  _ \ / _ \| \ | |/ ___|__ / / \  |_ _|
@@ -306,7 +240,6 @@ EOF
 DONGZAI 固件工厂 · Huasifei WH3000 Pro
 Platform: MediaTek MT7981 · ARM · 512MB
 EOF
-
     echo "========================================"
     echo " WH3000 Pro 配置完成"
     echo " 主机名    : WH3000-Pro"
@@ -316,13 +249,9 @@ EOF
     echo "========================================"
     ;;
 
-# ──────────────────────────────────────────
-# RE-SP-01B（MT7621 MIPS · 512MB RAM）
-# ──────────────────────────────────────────
 re-sp-01b)
     echo ">>> 应用 RE-SP-01B 专属配置..."
 
-    # 4. WiFi 预配置（MT7621 PCI 路径）
     cat > files/etc/config/wireless << 'EOF'
 config wifi-device 'radio0'
 	option type 'mac80211'
@@ -358,7 +287,6 @@ config wifi-iface 'default_radio1'
 EOF
     echo ">>> [4] RE-SP-01B WiFi 预配置完成"
 
-    # 5. WiFi 首启修复
     cat > files/etc/rc.local << 'EOF'
 #!/bin/sh
 sleep 8 && wifi up >/dev/null 2>&1
@@ -367,7 +295,6 @@ EOF
     chmod +x files/etc/rc.local
     echo ">>> [5] WiFi 首启修复完成"
 
-    # Banner
     cat > files/etc/banner << 'EOF'
  ____   ___  _ _  ____ _____ _      ___
 |  _ \ / _ \| \ | |/ ___|__ / / \  |_ _|
@@ -378,7 +305,6 @@ EOF
 DONGZAI 固件工厂 · JDCloud RE-SP-01B
 Platform: MediaTek MT7621 · MIPS · 512MB
 EOF
-
     echo "========================================"
     echo " RE-SP-01B 配置完成"
     echo " 主机名    : RE-SP-01B"
@@ -392,3 +318,4 @@ esac
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
 echo "========================================"
+
