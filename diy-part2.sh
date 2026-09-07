@@ -11,6 +11,57 @@ mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/config
 mkdir -p files/etc/init.d
 
+# ═══════════════════════════════════════════════════════
+# Linux 6.18：禁止编译外置 ovpn-dco
+# 根因：ovpn-backports 的 recvmsg 还是 5 参数，6.18 内核是 4 参数
+# ═══════════════════════════════════════════════════════
+
+echo ">>> [ovpn-dco] 关闭 OpenVPN DCO，并移除无法在 6.18 编译的外置模块..."
+
+# A. OpenVPN 默认 DCO=n，防止后面 make defconfig 再打开
+for f in feeds/packages/net/openvpn/Config-*.in; do
+  [ -f "$f" ] || continue
+  sed -i '/ENABLE_DCO/,+8 s/default y.*/default n/' "$f"
+  echo "  ✓ 已改 $f"
+done
+
+# B. 从 OpenVPN 依赖里拿掉 kmod-ovpn-*（单引号，$(1) 不能被 bash 展开）
+if [ -f feeds/packages/net/openvpn/Makefile ]; then
+  sed -i \
+    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco-v2//' \
+    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-backports//' \
+    -e 's/+OPENVPN_$(1)_ENABLE_DCO:kmod-ovpn-dco//' \
+    feeds/packages/net/openvpn/Makefile
+  echo "  ✓ 已从 openvpn Makefile 移除 kmod-ovpn 依赖"
+fi
+
+# C. 直接删掉包，make 不可能再编译它
+rm -rf feeds/packages/kernel/ovpn-dco
+rm -rf package/feeds/packages/ovpn-dco
+echo "  ✓ 已删除 ovpn-dco 源码目录"
+
+# D. .config 关死（defconfig 之后 workflow 还会再关一次）
+sed -i \
+  -e '/^CONFIG_PACKAGE_kmod-ovpn/d' \
+  -e '/^CONFIG_OPENVPN_.*ENABLE_DCO=/d' \
+  .config
+
+cat >> .config << 'EOF'
+CONFIG_PACKAGE_kmod-crypto-hash=y
+CONFIG_PACKAGE_kmod-crypto-aead=y
+CONFIG_PACKAGE_kmod-crypto-manager=y
+CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
+CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
+CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
+# CONFIG_PACKAGE_kmod-ovpn-dco is not set
+# CONFIG_PACKAGE_kmod-ovpn-dco-v2 is not set
+# CONFIG_PACKAGE_kmod-ovpn-backports is not set
+# CONFIG_OPENVPN_openssl_ENABLE_DCO is not set
+EOF
+
+echo ">>> [ovpn-dco] 完成"
+
 # ════════════════════════════════════════════
 # 通用设置（所有设备共享）
 # ════════════════════════════════════════════
@@ -318,4 +369,3 @@ esac
 echo "========================================"
 echo " DIY Part 2 全部完成 · DONGZAI 固件工厂"
 echo "========================================"
-
