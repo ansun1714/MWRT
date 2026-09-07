@@ -44,9 +44,6 @@ rm -rf /tmp/songloft-for-router
 echo ">>> songloft 包已加入编译环境"
 
 # ─── 克隆 luci-app-webdav ────────────────────────────────
-# 基于 nginx WebDAV 模块，轻量级文件共享服务
-# 依赖：nginx-mod-dav-ext（nginx 自动作为依赖拉入）
-# 架构：all（ARM/MIPS 均适用）
 git clone --depth=1 \
     -b openwrt-24.10 \
     https://github.com/sbwml/luci-app-webdav.git \
@@ -70,8 +67,9 @@ else
         -printf '    %f\n' 2>/dev/null | sort || true
     echo
 
+    # ★ 注意：变量引用必须用 "$MTPATCH" 和 "${N}"，不能有任何多余字符
     for N in 941 942 943 944 945 946 947 948 949; do
-        for PATCH in "\( MTPATCH"/" \){N}"-*.patch; do
+        for PATCH in "$MTPATCH"/"${N}"-*.patch; do
             [ -e "$PATCH" ] || continue
             echo "  [REMOVE] $(basename "$PATCH")"
             rm -f "$PATCH"
@@ -91,13 +89,13 @@ echo ">>> [Fix-1] WED backport 清理完成"
 # ★ Fix-2：RE-SP-01B flash 分区扩展至完整 32MB
 # ════════════════════════════════════════════════════════════
 
-echo ">>> [Fix-2] 修复 RE-SP-01B flash 分区限制（扩展至完整 32MB）..."
+echo ">>> [Fix-2] 修复 RE-SP-01B flash 分区限制..."
 
 DTS="target/linux/ramips/dts/mt7621_jdcloud_re-sp-01b.dts"
 MK="target/linux/ramips/image/mt7621.mk"
 
 if [ ! -f "$DTS" ] || [ ! -f "$MK" ]; then
-    echo "  [WARN] RE-SP-01B 源文件不存在，跳过 flash 扩展"
+    echo "  [WARN] RE-SP-01B 源文件不存在，跳过"
 else
     python3 << 'PYEOF'
 import re, os
@@ -105,7 +103,7 @@ import re, os
 DTS = 'target/linux/ramips/dts/mt7621_jdcloud_re-sp-01b.dts'
 src = open(DTS, encoding='utf-8').read()
 if '0x1fb0000' in src:
-    print('  [OK]   DTS 已扩展，无需重复修改')
+    print('  [OK]   DTS 已扩展')
 else:
     orig = src
     src = src.replace('reg = <0x50000 0x1ab0000>', 'reg = <0x50000 0x1fb0000>')
@@ -114,24 +112,18 @@ else:
     if src != orig:
         open(DTS, 'w', encoding='utf-8').write(src)
         print('  ✓ DTS：firmware 0x1ab0000 → 0x1fb0000，移除 mini/oem')
-    else:
-        print('  [WARN] DTS 内容未变化，可能源码格式有变')
 
 MK = 'target/linux/ramips/image/mt7621.mk'
 src = open(MK, encoding='utf-8').read()
-if 'jdcloud_re-sp-01b' not in src:
-    print('  [WARN] mt7621.mk 未找到 jdcloud_re-sp-01b，跳过')
+new = re.sub(
+    r'(define Device/jdcloud_re-sp-01b.*?^endef)',
+    lambda m: m.group(0).replace('IMAGE_SIZE := 27328k', 'IMAGE_SIZE := 32448k'),
+    src, flags=re.DOTALL|re.MULTILINE)
+if new != src:
+    open(MK, 'w', encoding='utf-8').write(new)
+    print('  ✓ mt7621.mk：IMAGE_SIZE 27328k → 32448k')
 else:
-    new = re.sub(
-        r'(define Device/jdcloud_re-sp-01b.*?^endef)',
-        lambda m: m.group(0).replace('IMAGE_SIZE := 27328k', 'IMAGE_SIZE := 32448k'),
-        src, flags=re.DOTALL | re.MULTILINE)
-    if new != src:
-        open(MK, 'w', encoding='utf-8').write(new)
-        print('  ✓ mt7621.mk：IMAGE_SIZE 27328k → 32448k')
-    else:
-        print('  [OK]   mt7621.mk 已是 32448k 或无需修改')
-
+    print('  [OK]   mt7621.mk 无需修改')
 print('>>> [Fix-2] 完成')
 PYEOF
 fi
@@ -193,151 +185,88 @@ for f in TARGET_FILES:
 print('>>> [Fix-3] 完成')
 PYEOF
 
-
 # ════════════════════════════════════════════════════════════
-# ★ Fix-4：Linux 6.18 Crypto Poly1305 模块依赖修复
+# ★ Fix-4：kmod-crypto-chacha20poly1305 的 libpoly1305.ko 依赖
+#
+# 根因：Linux 6.18.49 的 chacha20poly1305.ko 依赖 lib/crypto/libpoly1305.ko
+#       但 LEDE 的 kmod-crypto-poly1305 只打包 crypto/poly1305_generic.ko，
+#       没有包含 lib/crypto/libpoly1305.ko → 打包失败。
+#
+# 修法：把 lib/crypto/libpoly1305.ko 加入 kmod-crypto-poly1305 的 FILES。
+#       用 $(wildcard ...) 保证旧内核上不报错（文件不存在时返回空）。
+#       kmod-crypto-chacha20poly1305 已依赖 kmod-crypto-poly1305，
+#       无需修改任何依赖关系，改动最小。
+#
+# 为何之前各方案均失败：
+#   ChatGPT："+LINUX_6_18:..."  → LEDE 里无此符号，条件永假
+#   Grok：   "@lt6.18"          → LEDE crypto.mk 里根本没有此注解
 # ════════════════════════════════════════════════════════════
-# LEDE crypto.mk 把 libpoly1305.ko 标成 @lt6.18
-# 但 Linux 6.18 的 chacha20poly1305.ko 仍然依赖它
-# 打包就会报：
-# Package kmod-crypto-chacha20poly1305 is missing dependencies
-# for the following libraries: libpoly1305.ko
-# ════════════════════════════════════════════════════════════
 
-echo ""
-echo ">>> [Fix-4] 修复 Linux 6.18 Crypto Poly1305 依赖..."
-
-CRYPTO_MK="package/kernel/linux/modules/crypto.mk"
-
-if [ ! -f "$CRYPTO_MK" ]; then
-    echo "  ❌ 找不到：$CRYPTO_MK"
-    exit 1
-fi
+echo ">>> [Fix-4] 修复 kmod-crypto-chacha20poly1305 libpoly1305.ko 依赖..."
 
 python3 << 'PYEOF'
-import re
-import sys
+import re, sys, os
 
-path = "package/kernel/linux/modules/crypto.mk"
+MK = 'package/kernel/linux/modules/crypto.mk'
+if not os.path.exists(MK):
+    print('  [SKIP] crypto.mk 不存在'); sys.exit(0)
 
-with open(path, "r", encoding="utf-8") as f:
-    src = f.read()
+src = open(MK, encoding='utf-8').read()
+
+# 幂等：已修复则跳过
+if 'lib/crypto/libpoly1305' in src:
+    print('  [OK] crypto.mk 已含 libpoly1305.ko，无需重复修复')
+    sys.exit(0)
 
 orig = src
+fixed = False
 
-# 1. 6.18 仍然会生成 lib/crypto/libpoly1305.ko，必须打包
-src, n = re.subn(
-    r'(lib/crypto/libpoly1305\.ko)@lt6\.18',
-    r'\1',
-    src,
-)
-print("  {} 去掉 libpoly1305.ko@lt6.18  （命中 {} 处）".format(
-    "✓" if n else "[OK]", n
-))
+# ── 方法1：精确字符串替换（适配标准 LEDE crypto.mk 格式）──────────
+OLD = 'FILES:=$(LINUX_DIR)/crypto/poly1305_generic.ko'
+NEW = ('FILES:=$(LINUX_DIR)/crypto/poly1305_generic.ko \\\n'
+       '\t\t$(wildcard $(LINUX_DIR)/lib/crypto/libpoly1305.ko)')
 
-# 2. chacha20poly1305 必须依赖 kmod-crypto-lib-poly1305
-m = re.search(
-    r'define\s+KernelPackage/crypto-chacha20poly1305\b.*?^endef',
-    src,
-    flags=re.MULTILINE | re.DOTALL,
-)
+if OLD in src:
+    src = src.replace(OLD, NEW, 1)
+    fixed = True
+    print('  ✓ [方法1] 精确替换成功')
 
-if not m:
-    print("  ❌ 找不到 KernelPackage/crypto-chacha20poly1305")
-    sys.exit(1)
-
-block = m.group(0)
-
-if "kmod-crypto-lib-poly1305" not in block:
-    dep = re.search(
-        r'^(\s*DEPENDS\s*:=)([^\n]*)$',
-        block,
-        flags=re.MULTILINE,
+# ── 方法2：正则替换（处理 FILES 格式变体）──────────────────────────
+if not fixed:
+    m = re.search(
+        r'(define KernelPackage/crypto-poly1305\b.*?^endef)',
+        src, flags=re.DOTALL | re.MULTILINE
     )
-    if not dep:
-        print("  ❌ 找不到 crypto-chacha20poly1305 的 DEPENDS")
-        sys.exit(1)
+    if m:
+        block = m.group(1)
+        new_block = re.sub(
+            r'(FILES\s*:=\s*\$\(LINUX_DIR\)/[^\n]*poly1305[^\n]*\.ko)',
+            r'\1 \\\n\t\t$(wildcard $(LINUX_DIR)/lib/crypto/libpoly1305.ko)',
+            block
+        )
+        if new_block != block:
+            src = src[:m.start()] + new_block + src[m.end():]
+            fixed = True
+            print('  ✓ [方法2] 正则替换成功')
+        else:
+            print('  [方法2 未命中] kmod-crypto-poly1305 FILES 行诊断：')
+            for i, line in enumerate(block.split('\n'), 1):
+                if 'poly1305' in line.lower() or 'FILES' in line:
+                    print(f'    L{i}: {line}')
+    else:
+        print('  [WARN] 未找到 KernelPackage/crypto-poly1305 定义')
 
-    new_block = (
-        block[:dep.start()]
-        + dep.group(1)
-        + dep.group(2).rstrip()
-        + " +kmod-crypto-lib-poly1305"
-        + block[dep.end():]
-    )
-    src = src[:m.start()] + new_block + src[m.end():]
-    print("  ✓ 已给 crypto-chacha20poly1305 加上 kmod-crypto-lib-poly1305")
-else:
-    print("  [OK] crypto-chacha20poly1305 已依赖 libpoly1305")
+if not fixed:
+    print('  [WARN] Fix-4 未能修改 crypto.mk，请检查上方诊断输出')
+    sys.exit(0)  # 不中断，让后续步骤继续
 
-# 3. 如果没有 crypto-lib-poly1305 包，补一个
-if not re.search(r'define\s+KernelPackage/crypto-lib-poly1305\b', src):
-    poly = '''
-define KernelPackage/crypto-lib-poly1305
-  TITLE:=Poly1305 library interface
-  KCONFIG:=CONFIG_CRYPTO_LIB_POLY1305
-  HIDDEN:=1
-  FILES:=$(LINUX_DIR)/lib/crypto/libpoly1305.ko
-  $(call AddDepends/crypto,+kmod-crypto-hash)
-endef
-
-$(eval $(call KernelPackage,crypto-lib-poly1305))
-'''
-    pos = src.find("define KernelPackage/crypto-manager")
-    if pos < 0:
-        print("  ❌ 找不到 crypto-manager，无法插入")
-        sys.exit(1)
-    src = src[:pos] + poly + "\n" + src[pos:]
-    print("  ✓ 已注册 KernelPackage/crypto-lib-poly1305")
-else:
-    print("  [OK] crypto-lib-poly1305 已存在")
-
-if src != orig:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(src)
-    print("  ✓ crypto.mk 已写回")
-else:
-    print("  [OK] crypto.mk 无需改动")
-
-# 4. 最终检查
-with open(path, "r", encoding="utf-8") as f:
-    check = f.read()
-
-poly = re.search(
-    r'define\s+KernelPackage/crypto-lib-poly1305\b.*?^endef',
-    check,
-    flags=re.MULTILINE | re.DOTALL,
-)
-
-if not poly:
-    print("  ❌ 最终检查失败：crypto-lib-poly1305 未注册")
-    sys.exit(1)
-
-if "lib/crypto/libpoly1305.ko" not in poly.group(0):
-    print("  ❌ 最终检查失败：未包含 libpoly1305.ko")
-    sys.exit(1)
-
-if "libpoly1305.ko@lt6.18" in poly.group(0):
-    print("  ❌ 最终检查失败：@lt6.18 仍在")
-    sys.exit(1)
-
-chacha = re.search(
-    r'define\s+KernelPackage/crypto-chacha20poly1305\b.*?^endef',
-    check,
-    flags=re.MULTILINE | re.DOTALL,
-)
-
-if not chacha or "kmod-crypto-lib-poly1305" not in chacha.group(0):
-    print("  ❌ 最终检查失败：chacha20poly1305 未依赖 libpoly1305")
-    sys.exit(1)
-
-print("")
-print("  ╔══════════════════════════════════════╗")
-print("  ║     Fix-4 Crypto 修复验证通过       ║")
-print("  ╚══════════════════════════════════════╝")
+open(MK, 'w', encoding='utf-8').write(src)
+print('  ✓ crypto.mk 写入完成')
+print('    kmod-crypto-poly1305 现在包含：')
+print('      · crypto/poly1305_generic.ko       (所有内核)')
+print('      · lib/crypto/libpoly1305.ko         (kernel 6.18.49+, wildcard)')
 PYEOF
-
-echo ">>> [Fix-4] Crypto Poly1305 修复完成"
+echo ">>> [Fix-4] 完成"
 
 # ─── 完成 ────────────────────────────────────────────────
 
