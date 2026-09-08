@@ -10,7 +10,67 @@ echo "========================================"
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/config
 mkdir -p files/etc/init.d
+# ============================================================
+# Fix-WIFI：MT7981 WiFi Scripts
+# ============================================================
 
+case "$DEVICE" in
+wh3000|wh3000pro)
+
+    echo ">>> [Fix-WIFI] 补齐 wifi-scripts..."
+
+    WIFI_DIR="package/network/config/wifi-scripts"
+
+    rm -rf "$WIFI_DIR"
+
+    mkdir -p "$WIFI_DIR/files/lib/netifd"
+
+    cat > "$WIFI_DIR/Makefile" << 'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=wifi-scripts
+PKG_VERSION:=1.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/wifi-scripts
+  SECTION:=base
+  CATEGORY:=Base system
+  TITLE:=WiFi configuration scripts
+  DEPENDS:=+netifd +libubox +ubus
+  PKGARCH:=all
+endef
+
+define Build/Prepare
+endef
+
+define Build/Configure
+endef
+
+define Build/Compile
+endef
+
+define Package/wifi-scripts/install
+	$(INSTALL_DIR) $(1)/lib/netifd
+	$(INSTALL_BIN) ./files/lib/netifd/netifd-wireless.sh \
+		$(1)/lib/netifd/netifd-wireless.sh
+endef
+
+$(eval $(call BuildPackage,wifi-scripts))
+EOF
+
+    curl -fL --retry 3 \
+      https://raw.githubusercontent.com/openwrt/openwrt/v24.10.5/package/network/config/wifi-scripts/files/lib/netifd/netifd-wireless.sh \
+      -o "$WIFI_DIR/files/lib/netifd/netifd-wireless.sh"
+
+    chmod 0755 \
+      "$WIFI_DIR/files/lib/netifd/netifd-wireless.sh"
+
+    echo ">>> [Fix-WIFI] wifi-scripts 已补齐"
+
+    ;;
+esac
 
 # ============================================================
 # ★ Fix-WIFI
