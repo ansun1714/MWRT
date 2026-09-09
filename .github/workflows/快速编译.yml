@@ -663,7 +663,7 @@ jobs:
 
           grep "CONFIG_TARGET_" .config |
             head -20 |
-            tee "$LOG_DIR/final-target.txt"
+            tee "$LOG_DIR/final-target.txt" || true
 
           echo
           echo "── KERNEL ──"
