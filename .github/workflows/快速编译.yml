@@ -1456,6 +1456,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.ccache
-
           key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.hash.outputs.config_hash }}-${{ steps.hash.outputs.diy_hash }}
-          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.
