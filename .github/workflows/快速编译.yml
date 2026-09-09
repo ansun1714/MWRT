@@ -1,4 +1,4 @@
-name: 🏗️ MWRT-DONGZAI 固件编译(显示内核) - 快速增量 / 完全重编译
+name: 🏗️ MWRT-DONGZAI 固件编译 - 极速增量 / 完全重编译 / 智能诊断
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
           - wh3000
           - wh3000pro
           - re-sp-01b
+
       build_mode:
         description: '⚡ 编译模式'
         required: true
@@ -22,340 +23,1439 @@ on:
           - clean
 
 env:
-  LEDE_REPO:   https://github.com/coolsnowwolf/lede
+  LEDE_REPO: https://github.com/coolsnowwolf/lede
   LEDE_BRANCH: master
 
+  # 编译参数
+  MAKE_JOBS: 4
+
+  # 日志目录
+  LOG_DIR: /tmp/mwrt-logs
+
+  # ccache
+  CCACHE_MAXSIZE: 5G
+  CCACHE_COMPRESS: 1
+
+
 jobs:
+
   build:
+
+    name: "🏗️ MWRT-${{ github.event.inputs.device }}"
+
     runs-on: ubuntu-22.04
+
     permissions:
       contents: write
 
+
     steps:
+
+      # ==========================================================
+      # 01. 工厂信息
+      # ==========================================================
+
       - name: 🎯 MWRT 固件工厂
+        shell: bash
         run: |
-          cat << 'EOF'
-            ____   ___  _   _  ____ _____    _    ___
-           |  _ \ / _ \| \ | |/ ___|__  /  / \  |_ _|
-           | | | | | | |  \| | |  _ / /  / _ \  | |
-           | |_| | |_| | |\  | |_| |/ /__/ ___ \ | |
-           |____/ \___/|_| \_|\____/____/_/   \_\___|
-                  🏗️  固件工厂  ·  OpenWrt
-          EOF
+          set -Eeuo pipefail
+
+          mkdir -p "$LOG_DIR"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🏗️ MWRT-DONGZAI 固件工厂"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
           DEVICE="${{ github.event.inputs.device }}"
           BUILD_MODE="${{ github.event.inputs.build_mode }}"
-          case "$DEVICE" in
-            wh3000)     DNAME="华硅 WH3000" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
-            wh3000pro)  DNAME="华硅 WH3000 Pro" ; DSPEC="MT7981 ARM · 512MB RAM · eMMC" ;;
-            re-sp-01b)  DNAME="京东云无线宝 RE-SP-01B" ; DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC" ;;
-          esac
-          echo "  ┌─────────────────────────────────────────┐"
-          echo "  │  📦 设备：$DNAME"
-          echo "  │  🔧 规格：$DSPEC"
-          echo "  │  ⚡ 模式：$BUILD_MODE"
-          echo "  │  🕐 时间：$(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "  │  🔖 标识：MWRT-DONGZAI"
-          echo "  └─────────────────────────────────────────┘"
 
-      - name: 📥 检出仓库
+          case "$DEVICE" in
+
+            wh3000)
+              DNAME="华硅 WH3000"
+              DSPEC="MT7981 ARM64 · 512MB RAM · eMMC"
+              ;;
+
+            wh3000pro)
+              DNAME="华硅 WH3000 Pro"
+              DSPEC="MT7981 ARM64 · 512MB RAM · eMMC"
+              ;;
+
+            re-sp-01b)
+              DNAME="京东云无线宝 RE-SP-01B"
+              DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC"
+              ;;
+
+            *)
+              echo "❌ 未知设备: $DEVICE"
+              exit 1
+              ;;
+
+          esac
+
+          echo "📦 设备       : $DNAME"
+          echo "🔧 规格       : $DSPEC"
+          echo "⚡ 编译模式   : $BUILD_MODE"
+          echo "🧵 MAKE_JOBS  : $MAKE_JOBS"
+          echo "🐧 Runner     : $(uname -a)"
+          echo "🕐 时间       : $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🔖 标识       : MWRT-DONGZAI"
+
+          {
+            echo "DEVICE=$DEVICE"
+            echo "BUILD_MODE=$BUILD_MODE"
+            echo "DNAME=$DNAME"
+            echo "DSPEC=$DSPEC"
+            echo "MAKE_JOBS=$MAKE_JOBS"
+          } > "$LOG_DIR/environment.txt"
+
+
+      # ==========================================================
+      # 02. 检出 MWRT 仓库
+      # ==========================================================
+
+      - name: 📥 检出 MWRT 仓库
         uses: actions/checkout@v4
 
-      - name: 🧹 释放磁盘空间
+
+      # ==========================================================
+      # 03. 检查配置文件
+      # ==========================================================
+
+      - name: 🔎 检查 MWRT 配置
+        shell: bash
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -a -f
-          sudo apt-get clean
-          sudo swapoff -a || true
-          sudo rm -f /swapfile
+          set -Eeuo pipefail
+
+          DEVICE="${{ github.event.inputs.device }}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔎 检查配置文件"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          test -f "$DEVICE.config" || {
+            echo "❌ 缺少 $DEVICE.config"
+            exit 1
+          }
+
+          test -f diy-part1.sh || {
+            echo "❌ 缺少 diy-part1.sh"
+            exit 1
+          }
+
+          test -f diy-part2.sh || {
+            echo "❌ 缺少 diy-part2.sh"
+            exit 1
+          }
+
+          echo "✅ $DEVICE.config"
+          echo "✅ diy-part1.sh"
+          echo "✅ diy-part2.sh"
+
+          echo
+          echo "── 配置 SHA256 ──"
+          sha256sum "$DEVICE.config"
+
+          echo
+          echo "── DIY SHA256 ──"
+          sha256sum diy-part1.sh
+          sha256sum diy-part2.sh
+
+          {
+            sha256sum "$DEVICE.config"
+            sha256sum diy-part1.sh
+            sha256sum diy-part2.sh
+          } > "$LOG_DIR/mwrt-hash.txt"
+
+
+      # ==========================================================
+      # 04. 计算配置 Hash
+      # ==========================================================
+
+      - name: 🔐 生成缓存哈希
+        id: hash
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          DEVICE="${{ github.event.inputs.device }}"
+
+          CONFIG_HASH=$(
+            sha256sum "$DEVICE.config" |
+            awk '{print $1}' |
+            cut -c1-16
+          )
+
+          DIY_HASH=$(
+            {
+              sha256sum diy-part1.sh
+              sha256sum diy-part2.sh
+
+              if [ -d files ]; then
+                find files -type f -print0 |
+                  sort -z |
+                  xargs -0 sha256sum
+              fi
+            } |
+            sha256sum |
+            awk '{print $1}' |
+            cut -c1-16
+          )
+
+          echo "config_hash=$CONFIG_HASH" >> "$GITHUB_OUTPUT"
+          echo "diy_hash=$DIY_HASH" >> "$GITHUB_OUTPUT"
+
+          echo "CONFIG_HASH=$CONFIG_HASH"
+          echo "DIY_HASH=$DIY_HASH"
+
+
+      # ==========================================================
+      # 05. 释放磁盘
+      # ==========================================================
+
+      - name: 🧹 释放 Runner 磁盘
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧹 释放磁盘空间"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL \
+            || true
+
+          sudo docker image prune -a -f || true
+
+          sudo apt-get clean || true
+
+          echo
+          echo "── 磁盘 ──"
           df -h
 
+          echo
+          echo "── 内存 ──"
+          free -h
+
+
+      # ==========================================================
+      # 06. 安装编译依赖
+      # ==========================================================
+
       - name: ⚙️ 初始化编译环境
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "⚙️ 安装 OpenWrt 编译依赖"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
           sudo apt-get update -q
+
           sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-            gettext git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
-            zlib1g-dev file wget curl ccache cmake ninja-build jq rename libelf-dev \
-            device-tree-compiler
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            git \
+            libncurses5-dev \
+            libssl-dev \
+            python3 \
+            python3-pyelftools \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            ccache \
+            cmake \
+            ninja-build \
+            jq \
+            rename \
+            libelf-dev \
+            device-tree-compiler \
+            bc \
+            time \
+            xz-utils \
+            zip \
+            tar \
+            gzip
 
-      - name: 💾 生成缓存哈希
-        id: cache_hash
-        run: |
-          CONFIG_HASH=$(sha256sum "${{ github.event.inputs.device }}.config" | cut -d' ' -f1)
-          DIY_HASH=$(find . -maxdepth 2 -type f \( -name "diy-part*.sh" -o -name "files" -type d \) -exec sha256sum {} \; 2>/dev/null | sort -k2 | sha256sum | cut -d' ' -f1)
-          echo "config_hash=$CONFIG_HASH" >> $GITHUB_OUTPUT
-          echo "diy_hash=$DIY_HASH" >> $GITHUB_OUTPUT
+          echo
+          echo "── 工具版本 ──"
 
-      - name: 🧹 Clean 模式 - 清理所有缓存
+          git --version
+          gcc --version | head -1
+          clang --version | head -1
+          make --version | head -1
+          ccache --version | head -1
+          python3 --version
+
+
+      # ==========================================================
+      # 07. Clean 模式
+      # ==========================================================
+
+      - name: 🧹 Clean 模式 - 删除全部构建缓存
         if: github.event.inputs.build_mode == 'clean'
+        shell: bash
         run: |
-          echo "⚠️ 完全重新编译模式：清理所有缓存"
-          sudo rm -rf openwrt ~/.ccache
-          echo "✅ 缓存已清理"
+          set -Eeuo pipefail
 
-      # 关键：每次都重新克隆源码（不缓存源码目录，避免 diy-part1.sh 冲突）
-      - name: 📦 克隆源码
-        run: |
-          rm -rf openwrt   # 确保删除旧目录
-          git clone --depth=1 -b $LEDE_BRANCH $LEDE_REPO openwrt
-          echo "── 源码最新提交 ──"
-          git -C openwrt log --oneline -3
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧹 CLEAN MODE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      - name: 🔧 DIY Part 1 - 配置 Feeds
+          sudo rm -rf openwrt
+          rm -rf ~/.ccache
+
+          echo "✅ OpenWrt 源码目录已清理"
+          echo "✅ ccache 已清理"
+
+
+      # ==========================================================
+      # 08. 克隆 LEDE
+      # ==========================================================
+
+      - name: 📦 克隆 LEDE
+        shell: bash
         run: |
-          chmod +x diy-part1.sh
+          set -Eeuo pipefail
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📦 克隆 LEDE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          rm -rf openwrt
+
+          git clone \
+            --depth=1 \
+            --single-branch \
+            -b "$LEDE_BRANCH" \
+            "$LEDE_REPO" \
+            openwrt
+
           cd openwrt
-          ../diy-part1.sh
 
-      # 恢复 feeds 缓存（仅 fast 模式）
-      - name: ♻️ 恢复 feeds 缓存
+          LEDE_COMMIT=$(git rev-parse HEAD)
+          LEDE_SHORT=$(git rev-parse --short HEAD)
+
+          echo "LEDE_COMMIT=$LEDE_COMMIT" >> "$GITHUB_ENV"
+          echo "LEDE_SHORT=$LEDE_SHORT" >> "$GITHUB_ENV"
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "LEDE Commit : $LEDE_COMMIT"
+          echo "LEDE Short   : $LEDE_SHORT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          git log --oneline -5 | tee "$LOG_DIR/lede-log.txt"
+
+
+      # ==========================================================
+      # 09. 保存源码信息
+      # ==========================================================
+
+      - name: 🧾 保存源码环境信息
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd openwrt
+
+          {
+            echo "========== LEDE =========="
+            git remote -v
+
+            echo
+            echo "========== COMMIT =========="
+            git rev-parse HEAD
+
+            echo
+            echo "========== BRANCH =========="
+            git branch -a
+
+            echo
+            echo "========== STATUS =========="
+            git status --short
+
+            echo
+            echo "========== DATE =========="
+            date -u
+
+          } | tee "$LOG_DIR/source-info.txt"
+
+
+      # ==========================================================
+      # 10. DIY Part 1
+      # ==========================================================
+
+      - name: 🔧 DIY Part 1 - Feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔧 DIY PART 1"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          chmod +x diy-part1.sh
+
+          cd openwrt
+
+          ../diy-part1.sh \
+            2>&1 |
+            tee "$LOG_DIR/diy-part1.log"
+
+          STATUS=${PIPESTATUS[0]}
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "❌ diy-part1.sh 失败"
+            exit "$STATUS"
+          fi
+
+          echo "✅ DIY Part 1 完成"
+
+
+      # ==========================================================
+      # 11. Feeds 缓存
+      # ==========================================================
+
+      - name: ♻️ 恢复 Feeds 缓存
         if: github.event.inputs.build_mode == 'fast'
-        id: feeds_cache
-        uses: actions/cache@v4
+        id: feeds_restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             openwrt/feeds
             openwrt/package/feeds
-          key: feeds-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}
+
+          key: feeds-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-${{ steps.hash.outputs.diy_hash }}
+
           restore-keys: |
-            feeds-${{ runner.os }}-${{ github.event.inputs.device }}-
+            feeds-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-
+
+
+      # ==========================================================
+      # 12. 更新 Feeds
+      # ==========================================================
 
       - name: 🔄 更新 & 安装 Feeds
-        if: (github.event.inputs.build_mode == 'fast' && steps.feeds_cache.outputs.cache-hit != 'true') || github.event.inputs.build_mode == 'clean'
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔄 Feeds"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
+            echo "🧹 Clean 模式：强制更新 Feeds"
+
+            ./scripts/feeds update -a 2>&1 |
+              tee "$LOG_DIR/feeds-update.log"
+
+            STATUS=${PIPESTATUS[0]}
+
+            [ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+            ./scripts/feeds install -a 2>&1 |
+              tee "$LOG_DIR/feeds-install.log"
+
+            STATUS=${PIPESTATUS[0]}
+
+            [ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+          elif [ "${{ steps.feeds_restore.outputs.cache-hit }}" != "true" ]; then
+
+            echo "📥 Feeds 缓存未命中：更新 Feeds"
+
+            ./scripts/feeds update -a 2>&1 |
+              tee "$LOG_DIR/feeds-update.log"
+
+            STATUS=${PIPESTATUS[0]}
+
+            [ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+            ./scripts/feeds install -a 2>&1 |
+              tee "$LOG_DIR/feeds-install.log"
+
+            STATUS=${PIPESTATUS[0]}
+
+            [ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+          else
+
+            echo "⚡ Feeds 缓存命中：跳过更新"
+
+          fi
+
+          echo
+          echo "── 当前 Feeds ──"
+
+          ./scripts/feeds list -s |
+            tee "$LOG_DIR/feeds-list.txt"
+
+
+      # ==========================================================
+      # 13. 加载设备配置
+      # ==========================================================
 
       - name: 🎛️ 加载设备配置
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           DEVICE="${{ github.event.inputs.device }}"
+
           case "$DEVICE" in
-            wh3000)    cp wh3000.config    openwrt/.config ;;
-            wh3000pro) cp wh3000pro.config openwrt/.config ;;
-            re-sp-01b) cp re-sp-01b.config openwrt/.config ;;
+
+            wh3000)
+              cp wh3000.config openwrt/.config
+              ;;
+
+            wh3000pro)
+              cp wh3000pro.config openwrt/.config
+              ;;
+
+            re-sp-01b)
+              cp re-sp-01b.config openwrt/.config
+              ;;
+
           esac
+
           if [ "$DEVICE" = "re-sp-01b" ]; then
-            grep -v "CONFIG_TARGET_.*_DEVICE_" openwrt/.config > /tmp/.config_patched
-            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" >> /tmp/.config_patched
+
+            grep -v "CONFIG_TARGET_.*_DEVICE_" \
+              openwrt/.config \
+              > /tmp/.config_patched
+
+            echo \
+              "CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y" \
+              >> /tmp/.config_patched
+
             cp /tmp/.config_patched openwrt/.config
+
           fi
-          grep "DEVICE_" openwrt/.config | grep -v "^#" || true
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎛️ DEVICE CONFIG"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          grep "CONFIG_TARGET_" openwrt/.config |
+            grep -v "^#" |
+            tee "$LOG_DIR/target-config.txt"
+
+
+      # ==========================================================
+      # 14. 内核版本
+      # ==========================================================
 
       - name: 🐧 配置内核版本
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           DEVICE="${{ github.event.inputs.device }}"
+
+          cd openwrt
+
           case "$DEVICE" in
+
             wh3000|wh3000pro)
-              printf 'CONFIG_TESTING_KERNEL=y\n' >> openwrt/.config
+
+              sed -i '/^CONFIG_TESTING_KERNEL=/d' .config
+
+              echo "CONFIG_TESTING_KERNEL=y" >> .config
+
               ;;
+
             re-sp-01b)
-              sed -i '/CONFIG_TESTING_KERNEL/d' openwrt/.config
-              sed -i '/CONFIG_LINUX_6_6/d' openwrt/.config
-              printf '# CONFIG_TESTING_KERNEL is not set\n' >> openwrt/.config
+
+              sed -i \
+                -e '/^CONFIG_TESTING_KERNEL=/d' \
+                -e '/^CONFIG_LINUX_6_6=/d' \
+                -e '/^CONFIG_LINUX_6_18=/d' \
+                .config
+
+              echo "# CONFIG_TESTING_KERNEL is not set" >> .config
+
               ;;
+
           esac
 
+          echo
+          echo "── Kernel Config ──"
+
+          grep -E \
+            'CONFIG_LINUX_|CONFIG_TESTING_KERNEL' \
+            .config |
+            tee "$LOG_DIR/kernel-config.txt" || true
+
+
+      # ==========================================================
+      # 15. DIY Part 2
+      # ==========================================================
+
       - name: 🔧 DIY Part 2 - 文件定制
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           chmod +x diy-part2.sh
+
           cd openwrt
+
           export DEVICE="${{ github.event.inputs.device }}"
-          ../diy-part2.sh
+
+          ../diy-part2.sh \
+            2>&1 |
+            tee "$LOG_DIR/diy-part2.log"
+
+          STATUS=${PIPESTATUS[0]}
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "❌ diy-part2.sh 失败"
+            exit "$STATUS"
+          fi
+
+          echo "✅ DIY Part 2 完成"
+
+
+      # ==========================================================
+      # 16. DEFCONFIG
+      # ==========================================================
 
       - name: 📋 生成最终配置
+        shell: bash
         run: |
-          cd openwrt
-          make defconfig
-          echo "── TARGET 配置 ──"
-          grep "CONFIG_TARGET_" .config | head -10
-          echo "── 内核版本 ──"
-          grep -E "LINUX_6|LINUX_5|TESTING_KERNEL" .config | head -5 || true
+          set -Eeuo pipefail
 
-      # ---------- 恢复其余缓存（dl, build_dir, ccache）----------
-      - name: ♻️ 恢复 dl 缓存
+          cd openwrt
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📋 MAKE DEFCONFIG"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          make defconfig \
+            2>&1 |
+            tee "$LOG_DIR/defconfig.log"
+
+          STATUS=${PIPESTATUS[0]}
+
+          [ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+          echo
+          echo "── TARGET ──"
+
+          grep "CONFIG_TARGET_" .config |
+            head -20 |
+            tee "$LOG_DIR/final-target.txt"
+
+          echo
+          echo "── KERNEL ──"
+
+          grep -E \
+            'CONFIG_LINUX_|CONFIG_TESTING_KERNEL' \
+            .config |
+            tee "$LOG_DIR/final-kernel.txt" || true
+
+          echo
+          echo "── WIFI ──"
+
+          grep -E \
+            'CONFIG_PACKAGE_(wifi-scripts|kmod-mac80211|kmod-cfg80211|kmod-mt76|kmod-mt7915e|kmod-mt7981-firmware|wireless-regdb|iwinfo)' \
+            .config |
+            tee "$LOG_DIR/final-wifi.txt" || true
+
+          echo
+          echo "── QMODEM ──"
+
+          grep -E \
+            'CONFIG_PACKAGE_luci-app-qmodem' \
+            .config |
+            tee "$LOG_DIR/final-qmodem.txt" || true
+
+          cp .config "$LOG_DIR/final.config"
+
+
+      # ==========================================================
+      # 17. 检查关键依赖
+      # ==========================================================
+
+      - name: 🔍 编译前依赖检查
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd openwrt
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔍 编译前依赖检查"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          {
+            echo "========== PACKAGE STATUS =========="
+
+            echo
+            echo "[wifi-scripts]"
+            grep -R \
+              "Package/wifi-scripts" \
+              package/network/config/wifi-scripts \
+              2>/dev/null || true
+
+            echo
+            echo "[netifd-wireless]"
+            ls -lh \
+              package/network/config/wifi-scripts/files/lib/netifd/netifd-wireless.sh \
+              2>/dev/null || true
+
+            echo
+            echo "[QModem]"
+            grep -E \
+              'qmodem|quectel-CM|mhi-wwan' \
+              tmp/.config-package.in \
+              2>/dev/null |
+              head -100 || true
+
+            echo
+            echo "[Missing dependency scan]"
+
+            grep -R \
+              -E \
+              "kmod-mhi-wwan|quectel-CM-5G[^-M]" \
+              package/feeds \
+              feeds \
+              2>/dev/null |
+              head -100 || true
+
+          } | tee "$LOG_DIR/dependency-check.txt"
+
+
+      # ==========================================================
+      # 18. DL 缓存
+      # ==========================================================
+
+      - name: ♻️ 恢复下载缓存
         if: github.event.inputs.build_mode == 'fast'
-        id: dl_cache
-        uses: actions/cache@v4
+        id: dl_restore
+        uses: actions/cache/restore@v4
         with:
           path: openwrt/dl
-          key: dl-${{ runner.os }}-${{ github.event.inputs.device }}
-          restore-keys: dl-${{ runner.os }}-
 
-      - name: ♻️ 恢复编译目录缓存
+          key: dl-${{ runner.os }}-${{ github.event.inputs.device }}
+
+          restore-keys: |
+            dl-${{ runner.os }}-
+
+
+      # ==========================================================
+      # 19. BUILD CACHE
+      # ==========================================================
+
+      - name: ♻️ 恢复编译缓存
         if: github.event.inputs.build_mode == 'fast'
-        id: build_cache
-        uses: actions/cache@v4
+        id: build_restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             openwrt/build_dir
             openwrt/staging_dir
             openwrt/tmp
-          key: build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-${{ steps.cache_hash.outputs.diy_hash }}
-          restore-keys: |
-            build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-
-            build-${{ runner.os }}-${{ github.event.inputs.device }}-
 
-      - name: ♻️ 恢复 ccache 缓存
+          key: build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-${{ steps.hash.outputs.config_hash }}-${{ steps.hash.outputs.diy_hash }}
+
+          restore-keys: |
+            build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-${{ steps.hash.outputs.config_hash }}-
+            build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-
+
+
+      # ==========================================================
+      # 20. CCACHE
+      # ==========================================================
+
+      - name: ♻️ 恢复 ccache
         if: github.event.inputs.build_mode == 'fast'
-        id: ccache_cache
-        uses: actions/cache@v4
+        id: ccache_restore
+        uses: actions/cache/restore@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-${{ steps.cache_hash.outputs.diy_hash }}
+
+          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.hash.outputs.config_hash }}-${{ steps.hash.outputs.diy_hash }}
+
           restore-keys: |
             ccache-${{ runner.os }}-${{ github.event.inputs.device }}-
+            ccache-${{ runner.os }}-
 
-      - name: ⚙️ 配置 ccache 容量
+
+      # ==========================================================
+      # 21. 配置 CCACHE
+      # ==========================================================
+
+      - name: ⚡ 配置 ccache
+        shell: bash
         run: |
-          ccache -M 5G
-          ccache -z
-          echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
+          set -Eeuo pipefail
+
+          mkdir -p ~/.ccache
+
+          ccache -M "$CCACHE_MAXSIZE"
+          ccache --set-config=compression=true
+
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=$CCACHE_MAXSIZE" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
+
+          echo
+          ccache -s
+
+
+      # ==========================================================
+      # 22. 下载依赖
+      # ==========================================================
 
       - name: ⬇️ 下载编译依赖
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           cd openwrt
-          make download -j8
-          find dl -size -1024c -exec ls -l {} \; 2>/dev/null || true
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "⬇️ MAKE DOWNLOAD"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          make download \
+            -j8 \
+            V=s \
+            2>&1 |
+            tee "$LOG_DIR/download.log"
+
+          STATUS=${PIPESTATUS[0]}
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "❌ make download 失败"
+            exit "$STATUS"
+          fi
+
+          echo
+          echo "── 异常小文件 ──"
+
+          find dl \
+            -type f \
+            -size -1024c \
+            -exec ls -lh {} \; \
+            2>/dev/null || true
+
+
+      # ==========================================================
+      # 23. 编译
+      # ==========================================================
 
       - name: 🔨 编译固件
+        id: build
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           cd openwrt
+
           export PATH="/usr/lib/ccache:$PATH"
-          export CCACHE_DIR=~/.ccache
-          ccache -s
-          if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
-            echo "🧹 Clean 模式：执行 make clean"
-            make clean
-          fi
-          make -j$(nproc) V=s 2>&1 | tee /tmp/build.log | grep -E "^make\[[0-9]+\]|ERROR:|error:" || true
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "⚠️ 并行编译失败，单线程重试..."
-            make -j1 V=s 2>&1 | tail -150
-            exit 1
-          fi
+          export CCACHE_DIR="$HOME/.ccache"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔨 开始编译"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          echo "🧵 JOBS = $MAKE_JOBS"
+          echo "🐧 Kernel:"
+          make kernelversion || true
+
+          echo
+          echo "💾 磁盘:"
+          df -h
+
+          echo
+          echo "🧠 内存:"
+          free -h
+
+          echo
+          echo "📦 ccache:"
           ccache -s
 
-      # ========== 立即发布固件（不等待保存缓存） ==========
+          BUILD_START=$(date +%s)
+
+          echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🚀 MAKE WORLD"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          set +e
+
+          make -j"$MAKE_JOBS" V=sc \
+            2>&1 |
+            tee "$LOG_DIR/build.log"
+
+          BUILD_STATUS=${PIPESTATUS[0]}
+
+          set -e
+
+          BUILD_END=$(date +%s)
+          BUILD_TIME=$((BUILD_END - BUILD_START))
+
+          echo
+          echo "⏱️ 编译耗时：${BUILD_TIME} 秒"
+
+          echo "BUILD_STATUS=$BUILD_STATUS" \
+            > "$LOG_DIR/build-status.txt"
+
+          echo "BUILD_TIME=$BUILD_TIME" \
+            >> "$LOG_DIR/build-status.txt"
+
+          if [ "$BUILD_STATUS" -eq 0 ]; then
+
+            echo
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅ 并行编译成功"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            ccache -s
+
+            exit 0
+
+          fi
+
+
+          # ======================================================
+          # 并行失败
+          # ======================================================
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "❌ 并行编译失败"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          echo
+          echo "── 最后 200 行 ──"
+
+          tail -200 "$LOG_DIR/build.log" \
+            | tee "$LOG_DIR/build-tail-200.txt"
+
+
+          echo
+          echo "── 错误关键字 ──"
+
+          grep -i -E \
+            'error:|ERROR:|Error [0-9]+|failed|cannot find|cannot satisfy|unresolved|No rule to make|No such file|Collected errors|dependency' \
+            "$LOG_DIR/build.log" \
+            | tail -200 \
+            | tee "$LOG_DIR/build-errors.txt" \
+            || true
+
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔁 启动单线程诊断编译"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          set +e
+
+          make -j1 V=sc \
+            2>&1 |
+            tee "$LOG_DIR/build-retry-j1.log"
+
+          RETRY_STATUS=${PIPESTATUS[0]}
+
+          set -e
+
+          echo "RETRY_STATUS=$RETRY_STATUS" \
+            >> "$LOG_DIR/build-status.txt"
+
+
+          echo
+          echo "── 单线程错误 ──"
+
+          grep -i -E \
+            'error:|ERROR:|Error [0-9]+|failed|cannot find|cannot satisfy|unresolved|No rule to make|No such file|Collected errors|dependency' \
+            "$LOG_DIR/build-retry-j1.log" \
+            | tail -300 \
+            | tee "$LOG_DIR/retry-errors.txt" \
+            || true
+
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "❌ 编译最终失败"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          exit "$BUILD_STATUS"
+
+
+      # ==========================================================
+      # 24. 编译成功后获取内核版本
+      # ==========================================================
+
       - name: 🔍 获取完整内核版本
+        if: success()
         id: kernel
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           cd openwrt
-          KERNEL=$(make kernelversion 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+
+          KERNEL=$(
+            make kernelversion 2>/dev/null |
+            grep -oE '[0-9]+\.[0-9]+\.[0-9]+' |
+            head -1 ||
+            true
+          )
+
           if [ -z "$KERNEL" ]; then
-            KERNEL=$(find build_dir -type d -name "linux-*" 2>/dev/null | sed 's#^.*/linux-##' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
+
+            KERNEL=$(
+              find build_dir \
+                -type d \
+                -name "linux-*" \
+                2>/dev/null |
+              sed 's#^.*/linux-##' |
+              grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' |
+              sort -V |
+              tail -1 ||
+              true
+            )
+
           fi
+
           if [ -z "$KERNEL" ]; then
-            MAJOR_MINOR=$(grep "^CONFIG_LINUX_[0-9_]*=y" .config | head -1 | sed 's/CONFIG_LINUX_//' | sed 's/=y//' | tr '_' '.')
-            [ -n "$MAJOR_MINOR" ] && KERNEL="${MAJOR_MINOR}.*" || KERNEL="Unknown"
+
+            KERNEL="Unknown"
+
           fi
+
           COMMIT=$(git rev-parse --short HEAD)
+
           BUILD_TIME=$(date '+%Y-%m-%d %H:%M UTC')
+
           echo "kernel=$KERNEL" >> "$GITHUB_OUTPUT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "完整内核版本 : $KERNEL"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🐧 Kernel : $KERNEL"
+          echo "🔖 Commit : $COMMIT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+      # ==========================================================
+      # 25. 整理固件
+      # ==========================================================
 
       - name: 📁 整理固件
+        if: success()
         id: organize
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           mkdir -p upload
-          find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" -o -name "*.tar" \) -exec cp {} upload/ \;
+
+          find openwrt/bin/targets/ \
+            -type f \
+            \( \
+              -name "*.bin" \
+              -o -name "*.img.gz" \
+              -o -name "*.itb" \
+              -o -name "*.tar" \
+              -o -name "*.gz" \
+            \) \
+            -exec cp {} upload/ \;
+
           cd upload
+
+          shopt -s nullglob
+
           for f in *; do
-            newname=$(echo "$f" | sed 's/openwrt/MWRT-DONGZAI/g; s/lede/MWRT-DONGZAI/g')
-            [ "$f" != "$newname" ] && mv "$f" "$newname"
+
+            newname=$(echo "$f" |
+              sed \
+                -e 's/openwrt/MWRT-DONGZAI/g' \
+                -e 's/lede/MWRT-DONGZAI/g'
+            )
+
+            if [ "$f" != "$newname" ]; then
+              mv "$f" "$newname"
+            fi
+
           done
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📁 固件"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
           ls -lh
+
           if [ -z "$(ls -A .)" ]; then
-            echo "⚠️ 警告：未找到固件文件"
+            echo "❌ 未找到固件文件"
             exit 1
           fi
-          echo "✅ 固件整理完成，共 $(ls | wc -l) 个文件"
 
-      - name: 📤 上传 Artifact
+          echo
+          echo "✅ 固件数量：$(find . -maxdepth 1 -type f | wc -l)"
+
+
+      # ==========================================================
+      # 26. 上传固件 Artifact
+      # ==========================================================
+
+      - name: 📤 上传固件 Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MWRT-DONGZAI_${{ github.event.inputs.device }}_K${{ steps.kernel.outputs.kernel }}_${{ github.run_number }}
           path: upload/
+          if-no-files-found: error
           retention-days: 30
 
+
+      # ==========================================================
+      # 27. 创建 Release Tag
+      # ==========================================================
+
       - name: 🏷️ 生成 Release 标签
+        if: success()
         id: tag
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           DEVICE="${{ github.event.inputs.device }}"
+
           DATE=$(date +'%Y-%m-%d')
           TIME=$(date +'%H%M')
+
           KERNEL="${{ steps.kernel.outputs.kernel }}"
+
           TAG="MWRT-DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
+
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_date=$DATE" >> "$GITHUB_OUTPUT"
-          echo "生成 Tag：$TAG"
 
-      - name: 🚀 发布到 Release
+          echo "🏷️ Release Tag:"
+          echo "$TAG"
+
+
+      # ==========================================================
+      # 28. 发布 Release
+      # ==========================================================
+
+      - name: 🚀 发布到 GitHub Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
+
           tag_name: ${{ steps.tag.outputs.release_tag }}
+
           name: "🏗️ MWRT-DONGZAI · ${{ github.event.inputs.device }} · Linux ${{ steps.kernel.outputs.kernel }}"
+
           files: upload/*
+
           body: |
-            ## 🏗️ MWRT 固件工厂
+            ## 🏗️ MWRT-DONGZAI 固件
+
             | 项目 | 内容 |
             |---|---|
             | 📦 设备 | ${{ github.event.inputs.device }} |
-            | 🐧 Linux 内核 | ${{ steps.kernel.outputs.kernel }} |
-            | 🔖 MWRT Commit | ${{ steps.kernel.outputs.commit }} |
+            | 🐧 Linux | ${{ steps.kernel.outputs.kernel }} |
+            | 🔖 LEDE | ${{ steps.kernel.outputs.commit }} |
             | 🕐 编译时间 | ${{ steps.kernel.outputs.build_time }} |
-            | 📅 编译日期 | ${{ steps.tag.outputs.release_date }} |
-            | 🔖 标识 | MWRT-DONGZAI |
             | ⚡ 编译模式 | ${{ github.event.inputs.build_mode }} |
-            ### 固件文件说明
-            | 文件 | 用途 |
-            |---|---|
-            | `*-initramfs-kernel.bin` | 首次刷机 / TFTP 恢复 |
-            | `*-squashfs-sysupgrade.bin` | ✅ 日常升级固件（推荐） |
-            ### 刷机注意
-            - 首次刷入请先备份原厂固件
-            - 建议使用 `sysupgrade` 命令升级，勿勾选保留配置
-            ---
-            🤖 由 GitHub Actions 自动编译 · MWRT 固件工厂
+            | 🔖 标识 | MWRT-DONGZAI |
+
+            ### 固件
+
+            `*-squashfs-sysupgrade.bin`
+
+            ✅ 日常升级推荐使用此文件。
+
+            ### 注意
+
+            - 刷机前建议备份原厂固件
+            - 首次刷机请确认设备型号
+            - sysupgrade 建议不要保留旧配置
+            - 不同硬件版本不要混刷
+
           generate_release_notes: false
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ========== 最后才保存缓存（不影响发布） ==========
-      - name: 💾 保存 feeds 缓存
+
+      # ==========================================================
+      # 29. 编译失败 / 成功都收集诊断信息
+      # ==========================================================
+
+      - name: 🧪 收集最终诊断信息
         if: always()
-        uses: actions/cache@v4
+        shell: bash
+        run: |
+          set +e
+
+          mkdir -p "$LOG_DIR/final"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧪 收集诊断信息"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          {
+            echo "========== DATE =========="
+            date -u
+
+            echo
+            echo "========== UNAME =========="
+            uname -a
+
+            echo
+            echo "========== CPU =========="
+            nproc
+            lscpu
+
+            echo
+            echo "========== MEMORY =========="
+            free -h
+
+            echo
+            echo "========== DISK =========="
+            df -h
+
+            echo
+            echo "========== LOAD =========="
+            uptime
+
+            echo
+            echo "========== DISK OPENWRT =========="
+            du -sh openwrt 2>/dev/null
+
+          } > "$LOG_DIR/final/system.txt"
+
+
+          if [ -d openwrt ]; then
+
+            cd openwrt
+
+            git rev-parse HEAD \
+              > "$LOG_DIR/final/lede-commit.txt" \
+              2>/dev/null
+
+            git log --oneline -10 \
+              > "$LOG_DIR/final/lede-log.txt" \
+              2>/dev/null
+
+            cp .config \
+              "$LOG_DIR/final/final.config" \
+              2>/dev/null
+
+            {
+              echo "========== CONFIG PACKAGE =========="
+
+              grep '^CONFIG_PACKAGE_' .config |
+                sort
+
+              echo
+              echo "========== TARGET =========="
+
+              grep '^CONFIG_TARGET_' .config |
+                sort
+
+              echo
+              echo "========== KERNEL =========="
+
+              grep -E \
+                '^CONFIG_(LINUX_|TESTING_KERNEL)' \
+                .config |
+                sort
+
+            } > "$LOG_DIR/final/config-summary.txt"
+
+
+            echo
+            echo "========== FEEDS =========="
+
+            ./scripts/feeds list -s \
+              > "$LOG_DIR/final/feeds.txt" \
+              2>&1
+
+
+            echo
+            echo "========== PACKAGE DIRECTORIES =========="
+
+            find package/feeds \
+              -maxdepth 2 \
+              -type d \
+              > "$LOG_DIR/final/package-feeds.txt" \
+              2>&1
+
+
+            echo
+            echo "========== TMP =========="
+
+            find tmp \
+              -maxdepth 3 \
+              -type f \
+              | head -500 \
+              > "$LOG_DIR/final/tmp-files.txt" \
+              2>&1
+
+
+            echo
+            echo "========== PACKAGE ERRORS =========="
+
+            grep -Rni \
+              -E \
+              'error:|ERROR:|failed|cannot find|cannot satisfy|unresolved|No rule to make|No such file|Collected errors|dependency' \
+              tmp \
+              2>/dev/null |
+              tail -500 \
+              > "$LOG_DIR/final/tmp-errors.txt"
+
+
+            echo
+            echo "========== CONFIG PACKAGE DEPENDENCY =========="
+
+            if [ -f tmp/.config-package.in ]; then
+
+              grep -ni \
+                -E \
+                'qmodem|mhi-wwan|quectel|wifi-scripts' \
+                tmp/.config-package.in |
+                head -500 \
+                > "$LOG_DIR/final/dependency-qmodem-wifi.txt"
+
+            fi
+
+          fi
+
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧪 诊断信息收集完成"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          find "$LOG_DIR" -type f -printf '%p %s bytes\n' |
+            sort \
+            > "$LOG_DIR/file-list.txt"
+
+
+      # ==========================================================
+      # 30. 上传完整日志
+      # ==========================================================
+
+      - name: 📦 上传编译诊断包
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MWRT-DONGZAI-${{ github.event.inputs.device }}-DEBUG-${{ github.run_number }}
+          path: |
+            /tmp/mwrt-logs/
+          if-no-files-found: warn
+          retention-days: 30
+
+
+      # ==========================================================
+      # 31. 最终状态
+      # ==========================================================
+
+      - name: 📊 最终状态
+        if: always()
+        shell: bash
+        run: |
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 MWRT BUILD SUMMARY"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          echo "设备       : ${{ github.event.inputs.device }}"
+          echo "模式       : ${{ github.event.inputs.build_mode }}"
+          echo "LEDE       : ${LEDE_SHORT:-Unknown}"
+          echo "运行编号   : ${{ github.run_number }}"
+
+          echo
+          echo "Artifacts:"
+          echo "  📦 固件 Artifact"
+          echo "  🧪 DEBUG 诊断 Artifact"
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+      # ==========================================================
+      # 32. 保存 Feeds Cache
+      # ==========================================================
+
+      - name: 💾 保存 Feeds 缓存
+        if: success() && github.event.inputs.build_mode == 'fast'
+        uses: actions/cache/save@v4
         with:
           path: |
             openwrt/feeds
             openwrt/package/feeds
-          key: feeds-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}
 
-      - name: 💾 保存 dl 缓存
-        if: always()
-        uses: actions/cache@v4
+          key: feeds-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-${{ steps.hash.outputs.diy_hash }}
+
+
+      # ==========================================================
+      # 33. 保存 DL Cache
+      # ==========================================================
+
+      - name: 💾 保存下载缓存
+        if: success()
+        uses: actions/cache/save@v4
         with:
           path: openwrt/dl
+
           key: dl-${{ runner.os }}-${{ github.event.inputs.device }}
 
-      - name: 💾 保存编译目录缓存
-        if: always()
-        uses: actions/cache@v4
+
+      # ==========================================================
+      # 34. 保存 Build Cache
+      # ==========================================================
+
+      - name: 💾 保存编译缓存
+        if: success() && github.event.inputs.build_mode == 'fast'
+        uses: actions/cache/save@v4
         with:
           path: |
             openwrt/build_dir
             openwrt/staging_dir
             openwrt/tmp
-          key: build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-${{ steps.cache_hash.outputs.diy_hash }}
 
-      - name: 💾 保存 ccache 缓存
-        if: always()
-        uses: actions/cache@v4
+          key: build-${{ runner.os }}-${{ github.event.inputs.device }}-${{ env.LEDE_SHORT }}-${{ steps.hash.outputs.config_hash }}-${{ steps.hash.outputs.diy_hash }}
+
+
+      # ==========================================================
+      # 35. 保存 CCACHE
+      # ==========================================================
+
+      - name: 💾 保存 ccache
+        if: success() && github.event.inputs.build_mode == 'fast'
+        uses: actions/cache/save@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.cache_hash.outputs.config_hash }}-${{ steps.cache_hash.outputs.diy_hash }}
+
+          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.hash.outputs.config_hash }}-${{ steps.hash.outputs.diy_hash }}
+          key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.
