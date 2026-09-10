@@ -79,9 +79,7 @@ find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
 echo ">>> [3] Lucky 权限修复完成"
 
 # ════════════════════════════════════════════════════════════
-# ★ Fix-songloft：修复 songloft 启动脚本 UCI 校验错误
-# 根因：原脚本把 section_id 当成了回调函数，导致启动报错
-# 方案：直接在 files/ 覆盖正确的启动脚本，随固件打包
+# ★ Fix-songloft：修复 songloft 启动脚本（终极实测完美版）
 # ════════════════════════════════════════════════════════════
 echo ">>> [3.5] 修复 songloft 启动脚本..."
 cat > files/etc/init.d/songloft << 'EOF'
@@ -94,51 +92,45 @@ USE_PROCD=1
 
 PROG_DEFAULT=/usr/bin/songloft
 WEB_DEFAULT=/usr/share/songloft/web-embedded
+DB_DEFAULT=/etc/songloft/data
 
 LOGGER="logger -t songloft"
 
-validate_songloft_section() {
-    uci_load_validate songloft "$1" "$2" \
-    'enabled:bool:0' \
-    'listen_port:port:58091' \
-    'db_path:string:/etc/songloft/data' \
-    'base_path:string' \
-    'admin_username:string' \
-    'admin_password:string' \
-    'bin_path:string' \
-    'web_path:string'
-}
-
 start_instance() {
     local cfg="$1"
-    local result="$2"
-    [ "$result" = "0" ] || {
-        ${LOGGER} "配置校验失败，section=$cfg"
-        return 1
-    }
+    local enabled listen_port db_path base_path admin_username admin_password bin_path web_path
+    
+    config_get_bool enabled "$cfg" "enabled" "0"
+    config_get listen_port "$cfg" "listen_port" "58091"
+    config_get db_path "$cfg" "db_path" "$DB_DEFAULT"
+    config_get base_path "$cfg" "base_path" ""
+    config_get admin_username "$cfg" "admin_username" ""
+    config_get admin_password "$cfg" "admin_password" ""
+    config_get bin_path "$cfg" "bin_path" "$PROG_DEFAULT"
+    config_get web_path "$cfg" "web_path" "$WEB_DEFAULT"
+
     [ "$enabled" = "1" ] || return 0
 
-    local bin="${bin_path:-$PROG_DEFAULT}"
-    local web="${web_path:-$WEB_DEFAULT}"
-
-    if [ ! -x "$bin" ]; then
-        ${LOGGER} "未找到可执行文件: $bin"
+    if [ ! -x "$bin_path" ]; then
+        ${LOGGER} "未找到可执行文件: $bin_path"
         return 1
     fi
+    
     mkdir -p "$db_path"
 
     procd_open_instance "songloft.$cfg"
-    procd_set_param command "$bin"
+    procd_set_param command "$bin_path"
     procd_set_param env LISTEN_PORT="$listen_port"
-    [ -n "$base_path" ] && \
-        procd_append_param env BASE_PATH="$base_path"
-    [ -n "$admin_username" ] && \
-        procd_append_param env ADMIN_USERNAME="$admin_username"
-    [ -n "$admin_password" ] && \
-        procd_append_param env ADMIN_PASSWORD="$admin_password"
-    [ -d "$web" ] && \
-        procd_append_param env WEB_ROOT="$web"
-    procd_set_param cwd "$db_path"
+    procd_set_param env DB_PATH="$db_path"
+    procd_set_param env WEB_ROOT="$web_path"
+    
+    # ★ 关键修复：工作目录指向 web 目录，而不是数据库目录！
+    procd_set_param cwd "$web_path"
+    
+    [ -n "$base_path" ] && procd_append_param env BASE_PATH="$base_path"
+    [ -n "$admin_username" ] && procd_append_param env ADMIN_USERNAME="$admin_username"
+    [ -n "$admin_password" ] && procd_append_param env ADMIN_PASSWORD="$admin_password"
+    
     procd_set_param respawn
     procd_set_param stdout 1
     procd_set_param stderr 1
@@ -147,21 +139,12 @@ start_instance() {
 
 start_service() {
     config_load songloft
-    config_foreach validate_songloft_section songloft start_instance
+    config_foreach start_instance songloft
 }
 
-stop_service() {
-    :
-}
-
-service_triggers() {
-    procd_add_reload_trigger "songloft"
-}
-
-reload_service() {
-    stop
-    start
-}
+stop_service() { :; }
+service_triggers() { procd_add_reload_trigger "songloft"; }
+reload_service() { stop; start; }
 EOF
 chmod +x files/etc/init.d/songloft
 echo ">>> [3.5] songloft 启动脚本修复完成"
