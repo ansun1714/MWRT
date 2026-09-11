@@ -93,12 +93,13 @@ USE_PROCD=1
 PROG_DEFAULT=/usr/bin/songloft
 WEB_DEFAULT=/usr/share/songloft/web-embedded
 DB_DEFAULT=/etc/songloft/data
+MUSIC_DEFAULT=/mnt/sda1/music
 
 LOGGER="logger -t songloft"
 
 start_instance() {
     local cfg="$1"
-    local enabled listen_port db_path base_path admin_username admin_password bin_path web_path
+    local enabled listen_port db_path base_path admin_username admin_password bin_path web_path music_dir
     
     config_get_bool enabled "$cfg" "enabled" "0"
     config_get listen_port "$cfg" "listen_port" "58091"
@@ -108,6 +109,8 @@ start_instance() {
     config_get admin_password "$cfg" "admin_password" ""
     config_get bin_path "$cfg" "bin_path" "$PROG_DEFAULT"
     config_get web_path "$cfg" "web_path" "$WEB_DEFAULT"
+    # ★ 关键：从 UCI 读取 music_dir
+    config_get music_dir "$cfg" "music_dir" "$MUSIC_DEFAULT"
 
     [ "$enabled" = "1" ] || return 0
 
@@ -123,8 +126,10 @@ start_instance() {
     procd_set_param env LISTEN_PORT="$listen_port"
     procd_set_param env DB_PATH="$db_path"
     procd_set_param env WEB_ROOT="$web_path"
+    # ★ 关键：将路径注入环境变量
+    procd_set_param env MUSIC_DIR="$music_dir"
     
-    # ★ 关键修复：工作目录指向 web 目录，而不是数据库目录！
+    # 工作目录指向 web 目录，防止 404
     procd_set_param cwd "$web_path"
     
     [ -n "$base_path" ] && procd_append_param env BASE_PATH="$base_path"
@@ -148,6 +153,75 @@ reload_service() { stop; start; }
 EOF
 chmod +x files/etc/init.d/songloft
 echo ">>> [3.5] songloft 启动脚本修复完成"
+
+# ════════════════════════════════════════════════════════════
+# ★ 为 Songloft 原生 LuCI 界面注入“音乐库目录”选项
+# ════════════════════════════════════════════════════════════
+echo ">>> [3.6] 为 Songloft 原生 LuCI 界面添加音乐路径选项..."
+mkdir -p files/usr/lib/lua/luci/model/cbi/songloft
+
+cat > files/usr/lib/lua/luci/model/cbi/songloft/config.lua << 'EOF'
+local m, s, o
+
+m = Map("songloft", translate("SongLoft 音乐服务"),
+        translate("SongLoft 是一款轻量级自建音乐服务，支持本地音乐管理、网络歌曲、电台及歌单等功能。"))
+
+local is_running = (luci.sys.call("pidof songloft >/dev/null 2>&1") == 0)
+
+s = m:section(TypedSection, "songloft", translate("基础设置"))
+s.anonymous = true
+
+o = s:option(DummyValue, "_status", translate("服务状态"))
+o.rawhtml = true
+if is_running then
+    o.value = '<span style="color: green; font-weight: bold;">SongLoft 运行中</span> <a href="http://192.168.1.1:58091" target="_blank" class="btn cbi-button cbi-button-apply" style="padding: 5px 15px;">打开管理界面</a>'
+else
+    o.value = '<span style="color: red; font-weight: bold;">SongLoft 未运行</span>'
+end
+
+o = s:option(Flag, "enabled", translate("启用"))
+o.rmempty = false
+
+o = s:option(Value, "listen_port", translate("监听端口"))
+o.datatype = "port"
+o.default = "58091"
+
+o = s:option(Value, "db_path", translate("数据目录"))
+o.default = "/etc/songloft/data"
+o.description = translate("SongLoft 的工作目录，用于存放数据库及音乐索引")
+
+-- ★ 新增：音乐库目录选项
+o = s:option(Value, "music_dir", translate("音乐库目录（绝对路径）"))
+o.default = "/mnt/sda1/music"
+o.rmempty = false
+o.description = translate("例如 /mnt/sda1/music，确保路径存在且可读")
+
+o = s:option(Value, "base_path", translate("URL 基础路径"))
+o.rmempty = true
+
+o = s:option(Value, "admin_username", translate("管理员用户名"))
+o.rmempty = true
+
+o = s:option(Value, "admin_password", translate("管理员密码"))
+o.password = true
+o.rmempty = true
+
+o = s:option(Value, "bin_path", translate("程序路径"))
+o.default = "/usr/bin/songloft"
+o.rmempty = true
+
+o = s:option(Value, "web_path", translate("Web 界面目录"))
+o.default = "/usr/share/songloft/web-embedded"
+o.rmempty = true
+
+function m.on_after_commit(self)
+    luci.sys.call("/etc/init.d/songloft restart >/dev/null 2>&1")
+    luci.sys.exec("sleep 1")
+end
+
+return m
+EOF
+echo ">>> [3.6] Songloft 原生 LuCI 增强完成"
 
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
