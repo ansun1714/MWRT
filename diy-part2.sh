@@ -194,17 +194,14 @@ echo ">>> [3.5] songloft 启动脚本修复完成"
 # ════════════════════════════════════════════════════════════
 echo ">>> [3.6] 修改 luci-app-songloft 源码包，添加音乐路径选项..."
 
-# 根据 diy-part1.sh 的路径，源码包在 package/luci-app-songloft
 LUCI_SONGLOFT_DIR="package/luci-app-songloft"
 
-if [ ! -d "$LUCI_SONGLOFT_DIR" ]; then
-    echo "  ❌ 找不到 $LUCI_SONGLOFT_DIR，跳过修改"
-else
-    # 定位需要覆盖的 config.lua 路径（CBI 模型）
-    TARGET_DIR="$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft"
-    mkdir -p "$TARGET_DIR"
-
-    cat > "$TARGET_DIR/config.lua" << 'EOF'
+if [ -d "$LUCI_SONGLOFT_DIR" ]; then
+    FOUND=0
+    # ★ 使用 grep 搜索源码包中所有包含 Map("songloft") 的 .lua 文件并强制覆盖
+    for file in $(grep -rl --include="*.lua" 'Map("songloft"' "$LUCI_SONGLOFT_DIR" 2>/dev/null); do
+        echo "  ✓ 找到并覆盖: $file"
+        cat > "$file" << 'EOF'
 local m, s, o
 
 m = Map("songloft", translate("SongLoft 音乐服务"),
@@ -265,9 +262,87 @@ end
 
 return m
 EOF
-    echo "  ✓ 成功覆盖 luci-app-songloft 源码包中的 config.lua"
+        FOUND=1
+    done
+
+    if [ "$FOUND" -eq 0 ]; then
+        echo "  ⚠️ 未找到原始 config.lua，在 root/ 中创建..."
+        mkdir -p "$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft"
+        cat > "$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft/config.lua" << 'EOF'
+local m, s, o
+
+m = Map("songloft", translate("SongLoft 音乐服务"),
+        translate("SongLoft 是一款轻量级自建音乐服务，支持本地音乐管理、网络歌曲、电台及歌单等功能。"))
+
+local is_running = (luci.sys.call("pidof songloft >/dev/null 2>&1") == 0)
+
+s = m:section(TypedSection, "songloft", translate("基础设置"))
+s.anonymous = true
+
+o = s:option(DummyValue, "_status", translate("服务状态"))
+o.rawhtml = true
+if is_running then
+    o.value = '<span style="color: green; font-weight: bold;">SongLoft 运行中</span> <a href="http://192.168.1.1:58091" target="_blank" class="btn cbi-button cbi-button-apply" style="padding: 5px 15px;">打开管理界面</a>'
+else
+    o.value = '<span style="color: red; font-weight: bold;">SongLoft 未运行</span>'
+end
+
+o = s:option(Flag, "enabled", translate("启用"))
+o.rmempty = false
+
+o = s:option(Value, "listen_port", translate("监听端口"))
+o.datatype = "port"
+o.default = "58091"
+
+o = s:option(Value, "db_path", translate("数据目录"))
+o.default = "/etc/songloft/data"
+o.description = translate("SongLoft 的工作目录，用于存放数据库及音乐索引")
+
+o = s:option(Value, "music_dir", translate("音乐库目录（绝对路径）"))
+o.default = "/mnt/sda1/music"
+o.rmempty = false
+o.description = translate("例如 /mnt/sda1/music，确保路径存在且可读")
+
+o = s:option(Value, "base_path", translate("URL 基础路径"))
+o.rmempty = true
+
+o = s:option(Value, "admin_username", translate("管理员用户名"))
+o.rmempty = true
+
+o = s:option(Value, "admin_password", translate("管理员密码"))
+o.password = true
+o.rmempty = true
+
+o = s:option(Value, "bin_path", translate("程序路径"))
+o.default = "/usr/bin/songloft"
+o.rmempty = true
+
+o = s:option(Value, "web_path", translate("Web 界面目录"))
+o.default = "/usr/share/songloft/web-embedded"
+o.rmempty = true
+
+function m.on_after_commit(self)
+    luci.sys.call("/etc/init.d/songloft restart >/dev/null 2>&1")
+    luci.sys.exec("sleep 1")
+end
+
+return m
+EOF
+    fi
+    echo ">>> [3.6] Songloft 原生 LuCI 增强完成"
+else
+    echo "  ❌ 找不到 $LUCI_SONGLOFT_DIR，跳过修改"
 fi
-echo ">>> [3.6] Songloft 原生 LuCI 增强完成"
+
+# ════════════════════════════════════════════════════════════
+# ★ Fix-songloft-cache：强制清除 luci-app-songloft 编译缓存
+# 防止因 GitHub Actions 缓存导致旧界面被打包进去
+# ════════════════════════════════════════════════════════════
+echo ">>> [3.7] 强制清理 luci-app-songloft 编译缓存..."
+find build_dir -maxdepth 3 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null || true
+find staging_dir -maxdepth 3 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null || true
+find tmp -maxdepth 2 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null || true
+echo ">>> [3.7] 缓存清理完成"
 
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
