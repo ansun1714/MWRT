@@ -50,6 +50,24 @@ EOF
 echo ">>> [ovpn-dco] 完成"
 
 # ════════════════════════════════════════════════════════════
+# ★ Fix-qmodem：关闭无法编译的 sipd/voip (FM350 RNDIS 不需要)
+# ════════════════════════════════════════════════════════════
+
+echo ">>> [qmodem] 关闭无法编译的 sipd/voip..."
+
+sed -i \
+  -e '/^CONFIG_PACKAGE_qmodem-sipd=/d' \
+  -e '/^CONFIG_PACKAGE_qmodem-voip=/d' \
+  .config
+
+cat >> .config << 'EOF'
+# CONFIG_PACKAGE_qmodem-sipd is not set
+# CONFIG_PACKAGE_qmodem-voip is not set
+EOF
+
+echo ">>> [qmodem] 完成"
+
+# ════════════════════════════════════════════════════════════
 # 通用设置（所有设备共享）
 # ════════════════════════════════════════════════════════════
 
