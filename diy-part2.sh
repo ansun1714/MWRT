@@ -65,7 +65,7 @@ cat >> .config << 'EOF'
 # CONFIG_PACKAGE_qmodem-voip is not set
 EOF
 
-# ★ 新增：去掉 sms 等其他插件对 sipd 的 Makefile 依赖
+# ★ 去掉 sms 等其他插件对 sipd 的 Makefile 依赖
 echo ">>> [qmodem] 去掉 sms 对 sipd 的依赖..."
 find feeds/qmodem package/feeds/qmodem -name Makefile 2>/dev/null | while read -r f; do
     sed -i \
@@ -190,12 +190,21 @@ chmod +x files/etc/init.d/songloft
 echo ">>> [3.5] songloft 启动脚本修复完成"
 
 # ════════════════════════════════════════════════════════════
-# ★ 为 Songloft 原生 LuCI 界面注入“音乐库目录”选项
+# ★ 直接修改 luci-app-songloft 源码包，注入音乐路径选项
 # ════════════════════════════════════════════════════════════
-echo ">>> [3.6] 为 Songloft 原生 LuCI 界面添加音乐路径选项..."
-mkdir -p files/usr/lib/lua/luci/model/cbi/songloft
+echo ">>> [3.6] 修改 luci-app-songloft 源码包，添加音乐路径选项..."
 
-cat > files/usr/lib/lua/luci/model/cbi/songloft/config.lua << 'EOF'
+# 根据 diy-part1.sh 的路径，源码包在 package/luci-app-songloft
+LUCI_SONGLOFT_DIR="package/luci-app-songloft"
+
+if [ ! -d "$LUCI_SONGLOFT_DIR" ]; then
+    echo "  ❌ 找不到 $LUCI_SONGLOFT_DIR，跳过修改"
+else
+    # 定位需要覆盖的 config.lua 路径（CBI 模型）
+    TARGET_DIR="$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft"
+    mkdir -p "$TARGET_DIR"
+
+    cat > "$TARGET_DIR/config.lua" << 'EOF'
 local m, s, o
 
 m = Map("songloft", translate("SongLoft 音乐服务"),
@@ -256,6 +265,8 @@ end
 
 return m
 EOF
+    echo "  ✓ 成功覆盖 luci-app-songloft 源码包中的 config.lua"
+fi
 echo ">>> [3.6] Songloft 原生 LuCI 增强完成"
 
 cat > files/etc/sysctl.conf << 'EOF'
