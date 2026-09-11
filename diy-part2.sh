@@ -50,7 +50,7 @@ EOF
 echo ">>> [ovpn-dco] 完成"
 
 # ════════════════════════════════════════════════════════════
-# ★ Fix-qmodem：关闭无法编译的 sipd/voip (FM350 RNDIS 不需要)
+# ★ Fix-qmodem：关闭无法编译的 sipd/voip 并斩断 Makefile 依赖
 # ════════════════════════════════════════════════════════════
 
 echo ">>> [qmodem] 关闭无法编译的 sipd/voip..."
@@ -64,6 +64,15 @@ cat >> .config << 'EOF'
 # CONFIG_PACKAGE_qmodem-sipd is not set
 # CONFIG_PACKAGE_qmodem-voip is not set
 EOF
+
+# ★ 新增：去掉 sms 等其他插件对 sipd 的 Makefile 依赖
+echo ">>> [qmodem] 去掉 sms 对 sipd 的依赖..."
+find feeds/qmodem package/feeds/qmodem -name Makefile 2>/dev/null | while read -r f; do
+    sed -i \
+      -e 's/+qmodem-sipd//' \
+      -e 's/+qmodem-voip//' \
+      "$f"
+done
 
 echo ">>> [qmodem] 完成"
 
@@ -127,7 +136,6 @@ start_instance() {
     config_get admin_password "$cfg" "admin_password" ""
     config_get bin_path "$cfg" "bin_path" "$PROG_DEFAULT"
     config_get web_path "$cfg" "web_path" "$WEB_DEFAULT"
-    # ★ 关键：从 UCI 读取 music_dir
     config_get music_dir "$cfg" "music_dir" "$MUSIC_DEFAULT"
 
     [ "$enabled" = "1" ] || return 0
@@ -139,15 +147,24 @@ start_instance() {
     
     mkdir -p "$db_path"
 
+    # ★★★ 终极软链接兜底（无论程序逻辑怎么变，都指向真实路径） ★★★
+    if [ -d "$music_dir" ]; then
+        if [ ! -e "$web_path/music" ]; then
+            ln -sf "$music_dir" "$web_path/music"
+            ${LOGGER} "已创建软链接: $web_path/music -> $music_dir"
+        fi
+        if [ ! -e "$db_path/music" ]; then
+            ln -sf "$music_dir" "$db_path/music"
+            ${LOGGER} "已创建软链接: $db_path/music -> $music_dir"
+        fi
+    fi
+
     procd_open_instance "songloft.$cfg"
     procd_set_param command "$bin_path"
     procd_set_param env LISTEN_PORT="$listen_port"
     procd_set_param env DB_PATH="$db_path"
     procd_set_param env WEB_ROOT="$web_path"
-    # ★ 关键：将路径注入环境变量
     procd_set_param env MUSIC_DIR="$music_dir"
-    
-    # 工作目录指向 web 目录，防止 404
     procd_set_param cwd "$web_path"
     
     [ -n "$base_path" ] && procd_append_param env BASE_PATH="$base_path"
