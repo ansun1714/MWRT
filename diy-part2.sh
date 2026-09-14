@@ -50,29 +50,43 @@ EOF
 echo ">>> [ovpn-dco] 完成"
 
 # ════════════════════════════════════════════════════════════
-# ★ Fix-qmodem：关闭无法编译的 sipd/voip 并斩断 Makefile 依赖
+# ★ QModem：保持官方 Feed，不修改 QModem Makefile
 # ════════════════════════════════════════════════════════════
 
-echo ">>> [qmodem] 关闭无法编译的 sipd/voip..."
+echo ">>> [qmodem] 检查官方 QModem..."
 
+# 删除旧版 QModem UI
+# 官方新版 Next UI 与旧版 luci-app-qmodem 不同时安装
 sed -i \
-  -e '/^CONFIG_PACKAGE_qmodem-sipd=/d' \
-  -e '/^CONFIG_PACKAGE_qmodem-voip=/d' \
+  -e '/^CONFIG_PACKAGE_luci-app-qmodem=y$/d' \
+  .config
+
+# 清除可能残留的 Next UI 配置，然后重新明确启用
+sed -i \
+  -e '/^CONFIG_PACKAGE_luci-app-qmodem-next=/d' \
   .config
 
 cat >> .config << 'EOF'
-# CONFIG_PACKAGE_qmodem-sipd is not set
-# CONFIG_PACKAGE_qmodem-voip is not set
+
+# ============================================================
+# QModem - Official QModem Next
+# ============================================================
+CONFIG_PACKAGE_qmodem=y
+CONFIG_PACKAGE_luci-app-qmodem-next=y
+CONFIG_PACKAGE_luci-app-qmodem-sms=y
+CONFIG_PACKAGE_luci-app-qmodem-ttl=y
+CONFIG_PACKAGE_quectel-CM-5G-M=y
 EOF
 
-# ★ 去掉 sms 等其他插件对 sipd 的 Makefile 依赖
-echo ">>> [qmodem] 去掉 sms 对 sipd 的依赖..."
-find feeds/qmodem package/feeds/qmodem -name Makefile 2>/dev/null | while read -r f; do
-    sed -i \
-      -e 's/+qmodem-sipd//' \
-      -e 's/+qmodem-voip//' \
-      "$f"
-done
+echo ">>> [qmodem] 保持官方 Makefile，不修改 sipd/voip 依赖"
+
+# 检查 QModem Feed
+if [ -d "feeds/qmodem" ]; then
+    echo "✅ feeds/qmodem 存在"
+else
+    echo "❌ feeds/qmodem 不存在"
+    exit 1
+fi
 
 echo ">>> [qmodem] 完成"
 
@@ -95,20 +109,26 @@ uci set system.@system[0].zonename='Asia/Shanghai'
 uci commit system
 exit 0
 EOF
+
 chmod +x files/etc/uci-defaults/01-system
+
 echo ">>> [1] 主机名：${HOSTNAME}"
 
 sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
   package/lean/default-settings/files/zzz-default-settings 2>/dev/null
+
 echo ">>> [2] 默认主题修改完成"
 
 find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
+
 echo ">>> [3] Lucky 权限修复完成"
 
 # ════════════════════════════════════════════════════════════
 # ★ Fix-songloft：修复 songloft 启动脚本（终极实测完美版）
 # ════════════════════════════════════════════════════════════
+
 echo ">>> [3.5] 修复 songloft 启动脚本..."
+
 cat > files/etc/init.d/songloft << 'EOF'
 #!/bin/sh /etc/rc.common
 # SPDX-License-Identifier: GPL-2.0-only
@@ -127,7 +147,7 @@ LOGGER="logger -t songloft"
 start_instance() {
     local cfg="$1"
     local enabled listen_port db_path base_path admin_username admin_password bin_path web_path music_dir
-    
+
     config_get_bool enabled "$cfg" "enabled" "0"
     config_get listen_port "$cfg" "listen_port" "58091"
     config_get db_path "$cfg" "db_path" "$DB_DEFAULT"
@@ -144,7 +164,7 @@ start_instance() {
         ${LOGGER} "未找到可执行文件: $bin_path"
         return 1
     fi
-    
+
     mkdir -p "$db_path"
 
     # ★★★ 终极软链接兜底（无论程序逻辑怎么变，都指向真实路径） ★★★
@@ -153,6 +173,7 @@ start_instance() {
             ln -sf "$music_dir" "$web_path/music"
             ${LOGGER} "已创建软链接: $web_path/music -> $music_dir"
         fi
+
         if [ ! -e "$db_path/music" ]; then
             ln -sf "$music_dir" "$db_path/music"
             ${LOGGER} "已创建软链接: $db_path/music -> $music_dir"
@@ -166,11 +187,11 @@ start_instance() {
     procd_set_param env WEB_ROOT="$web_path"
     procd_set_param env MUSIC_DIR="$music_dir"
     procd_set_param cwd "$web_path"
-    
+
     [ -n "$base_path" ] && procd_append_param env BASE_PATH="$base_path"
     [ -n "$admin_username" ] && procd_append_param env ADMIN_USERNAME="$admin_username"
     [ -n "$admin_password" ] && procd_append_param env ADMIN_PASSWORD="$admin_password"
-    
+
     procd_set_param respawn
     procd_set_param stdout 1
     procd_set_param stderr 1
@@ -183,24 +204,39 @@ start_service() {
 }
 
 stop_service() { :; }
-service_triggers() { procd_add_reload_trigger "songloft"; }
-reload_service() { stop; start; }
+
+service_triggers() {
+    procd_add_reload_trigger "songloft"
+}
+
+reload_service() {
+    stop
+    start
+}
+
 EOF
+
 chmod +x files/etc/init.d/songloft
+
 echo ">>> [3.5] songloft 启动脚本修复完成"
 
 # ════════════════════════════════════════════════════════════
 # ★ 直接修改 luci-app-songloft 源码包，注入音乐路径选项
 # ════════════════════════════════════════════════════════════
+
 echo ">>> [3.6] 修改 luci-app-songloft 源码包，添加音乐路径选项..."
 
 LUCI_SONGLOFT_DIR="package/luci-app-songloft"
 
 if [ -d "$LUCI_SONGLOFT_DIR" ]; then
+
     FOUND=0
+
     # ★ 使用 grep 搜索源码包中所有包含 Map("songloft") 的 .lua 文件并强制覆盖
     for file in $(grep -rl --include="*.lua" 'Map("songloft"' "$LUCI_SONGLOFT_DIR" 2>/dev/null); do
+
         echo "  ✓ 找到并覆盖: $file"
+
         cat > "$file" << 'EOF'
 local m, s, o
 
@@ -214,6 +250,7 @@ s.anonymous = true
 
 o = s:option(DummyValue, "_status", translate("服务状态"))
 o.rawhtml = true
+
 if is_running then
     o.value = '<span style="color: green; font-weight: bold;">SongLoft 运行中</span> <a href="http://192.168.1.1:58091" target="_blank" class="btn cbi-button cbi-button-apply" style="padding: 5px 15px;">打开管理界面</a>'
 else
@@ -262,12 +299,16 @@ end
 
 return m
 EOF
+
         FOUND=1
     done
 
     if [ "$FOUND" -eq 0 ]; then
+
         echo "  ⚠️ 未找到原始 config.lua，在 root/ 中创建..."
+
         mkdir -p "$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft"
+
         cat > "$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft/config.lua" << 'EOF'
 local m, s, o
 
@@ -281,6 +322,7 @@ s.anonymous = true
 
 o = s:option(DummyValue, "_status", translate("服务状态"))
 o.rawhtml = true
+
 if is_running then
     o.value = '<span style="color: green; font-weight: bold;">SongLoft 运行中</span> <a href="http://192.168.1.1:58091" target="_blank" class="btn cbi-button cbi-button-apply" style="padding: 5px 15px;">打开管理界面</a>'
 else
@@ -328,8 +370,11 @@ end
 
 return m
 EOF
+
     fi
+
     echo ">>> [3.6] Songloft 原生 LuCI 增强完成"
+
 else
     echo "  ❌ 找不到 $LUCI_SONGLOFT_DIR，跳过修改"
 fi
@@ -338,16 +383,20 @@ fi
 # ★ Fix-songloft-cache：强制清除 luci-app-songloft 编译缓存
 # 防止因 GitHub Actions 缓存导致旧界面被打包进去
 # ════════════════════════════════════════════════════════════
+
 echo ">>> [3.7] 强制清理 luci-app-songloft 编译缓存..."
+
 find build_dir -maxdepth 3 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null || true
 find staging_dir -maxdepth 3 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null || true
 find tmp -maxdepth 2 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null || true
+
 echo ">>> [3.7] 缓存清理完成"
 
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
 net.ipv4.tcp_congestion_control=bbr
 EOF
+
 echo ">>> [8] sysctl 优化完成"
 
 cat > files/etc/config/msd_lite << 'EOF'
@@ -360,27 +409,35 @@ config msd_lite 'config'
 	option buffer '16384'
 	option rejointime '0'
 EOF
+
 echo ">>> [9-1] msd_lite UCI 配置写入完成"
 
 cat > files/etc/init.d/msd_lite << 'INITEOF'
 #!/bin/sh /etc/rc.common
+
 START=99
 USE_PROCD=1
 
 start_service() {
     local enable type port source threads buffer rejointime PROG
+
     config_load "msd_lite"
+
     config_get_bool enable "config" "enable" "0"
     [ "$enable" -eq "1" ] || return 0
+
     config_get type       "config" "type"       "0"
     config_get port       "config" "port"       "7088"
     config_get source     "config" "source"     "eth0"
     config_get threads    "config" "threads"    "0"
     config_get buffer     "config" "buffer"     "16384"
     config_get rejointime "config" "rejointime" "0"
+
     mkdir -p /var/etc
+
     if [ "$type" = "0" ]; then
         PROG="/usr/bin/msd_lite"
+
         cat > /var/etc/msd_lite.conf << XMLEOF
 <?xml version="1.0" encoding="utf-8"?>
 <msd>
@@ -422,8 +479,11 @@ start_service() {
   </sourceProfileList>
 </msd>
 XMLEOF
+
     else
+
         PROG="/usr/bin/rtp2httpd"
+
         cat > /var/etc/msd_lite.conf << RTPEOF
 [global]
 verbosity = 3
@@ -436,7 +496,9 @@ zerocopy-on-send = yes
 [bind]
 * ${port}
 RTPEOF
+
     fi
+
     procd_open_instance
     procd_set_param command "$PROG" -c /var/etc/msd_lite.conf
     procd_set_param respawn
@@ -444,12 +506,20 @@ RTPEOF
     procd_close_instance
 }
 
-reload_service() { stop; start; }
-service_triggers() { procd_add_reload_trigger "msd_lite"; }
-INITEOF
-chmod +x files/etc/init.d/msd_lite
-echo ">>> [9-2] msd_lite 双后端 init.d 写入完成"
+reload_service() {
+    stop
+    start
+}
 
+service_triggers() {
+    procd_add_reload_trigger "msd_lite"
+}
+
+INITEOF
+
+chmod +x files/etc/init.d/msd_lite
+
+echo ">>> [9-2] msd_lite 双后端 init.d 写入完成"
 # ════════════════════════════════════════════════════════════
 # 设备专属设置
 # ════════════════════════════════════════════════════════════
@@ -459,10 +529,13 @@ case "$DEVICE" in
 # ──────────────────────────────────────────
 # WH3000 / WH3000 Pro（MT7981 ARM Filogic）
 # ──────────────────────────────────────────
+
 wh3000|wh3000pro)
+
     echo ">>> 应用 WH3000/WH3000 Pro 专属配置..."
 
     echo ">>> [WiFi-Fix] 补充缺失的 netifd-wireless.sh..."
+
     mkdir -p files/lib/netifd
 
     curl -fsSL --retry 3 \
@@ -514,6 +587,7 @@ config wifi-iface 'default_radio1'
 	option encryption 'psk2'
 	option key '18851575507'
 EOF
+
     echo ">>> [4] WH3000 Pro WiFi 预置配置完成"
 
     cat > files/etc/config/fstab << 'EOF'
@@ -532,13 +606,19 @@ EOF
 
     cat > files/etc/uci-defaults/30-docker << 'EOF'
 #!/bin/sh
+
 mkdir -p /mnt/mmcblk0p7/docker
+
 uci set dockerd.globals.data_root='/mnt/mmcblk0p7/docker'
 uci commit dockerd
+
 /etc/init.d/dockerd enable
+
 exit 0
 EOF
+
     chmod +x files/etc/uci-defaults/30-docker
+
     echo ">>> [6] Docker 数据目录配置完成（/mnt/mmcblk0p7）"
 
     cat > files/etc/banner << 'EOF'
@@ -551,6 +631,7 @@ EOF
 DONGZAI 固件工厂 · Huasifei WH3000 Pro
 Platform: MediaTek MT7981 · ARM · 512MB
 EOF
+
     echo "========================================"
     echo " WH3000 Pro 配置完成"
     echo " 主机名    : WH3000-Pro"
@@ -558,12 +639,15 @@ EOF
     echo " WiFi 5G   : 栋仔_5G"
     echo " Docker    : /mnt/mmcblk0p7/docker"
     echo "========================================"
+
     ;;
 
 # ──────────────────────────────────────────
 # RE-SP-01B（MT7621 MIPS · 512MB RAM）
 # ──────────────────────────────────────────
+
 re-sp-01b)
+
     echo ">>> 应用 RE-SP-01B 专属配置..."
 
     cat > files/etc/config/wireless << 'EOF'
@@ -599,14 +683,19 @@ config wifi-iface 'default_radio1'
 	option ssid 'RE-SP-01B_5G'
 	option encryption 'none'
 EOF
+
     echo ">>> [4] RE-SP-01B WiFi 预置配置完成"
 
     cat > files/etc/rc.local << 'EOF'
 #!/bin/sh
+
 sleep 8 && wifi up >/dev/null 2>&1
+
 exit 0
 EOF
+
     chmod +x files/etc/rc.local
+
     echo ">>> [5] WiFi 首启延迟启动完成"
 
     cat > files/etc/banner << 'EOF'
@@ -619,12 +708,14 @@ EOF
 DONGZAI 固件工厂 · JDCloud RE-SP-01B
 Platform: MediaTek MT7621 · MIPS · 512MB
 EOF
+
     echo "========================================"
     echo " RE-SP-01B 配置完成"
     echo " 主机名    : RE-SP-01B"
     echo " WiFi 2.4G : RE-SP-01B"
     echo " WiFi 5G   : RE-SP-01B_5G"
     echo "========================================"
+
     ;;
 
 esac
