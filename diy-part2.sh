@@ -49,46 +49,62 @@ EOF
 
 echo ">>> [ovpn-dco] 完成"
 
+
 # ════════════════════════════════════════════════════════════
-# ★ QModem：保持官方 Feed，不修改 QModem Makefile
+# ★ QModem：使用 luci-app-qmodem-next
+#
+# 重要：
+# 1. 关闭旧版 luci-app-qmodem
+# 2. 开启 luci-app-qmodem-next
+# 3. qmodem-sipd 必须开启
+# 4. sms-forwarder-next 依赖 qmodem-sipd
+# 5. 不再修改 QModem Makefile 依赖
 # ════════════════════════════════════════════════════════════
 
-echo ">>> [qmodem] 检查官方 QModem..."
+echo ">>> [qmodem] 配置 QModem Next..."
 
-# 删除旧版 QModem UI
-# 官方新版 Next UI 与旧版 luci-app-qmodem 不同时安装
 sed -i \
-  -e '/^CONFIG_PACKAGE_luci-app-qmodem=y$/d' \
-  .config
-
-# 清除可能残留的 Next UI 配置，然后重新明确启用
-sed -i \
+  -e '/^CONFIG_PACKAGE_luci-app-qmodem=/d' \
   -e '/^CONFIG_PACKAGE_luci-app-qmodem-next=/d' \
+  -e '/^CONFIG_PACKAGE_qmodem-sipd=/d' \
+  -e '/^CONFIG_PACKAGE_qmodem-voip=/d' \
+  -e '/^CONFIG_PACKAGE_sms-forwarder-next=/d' \
   .config
 
 cat >> .config << 'EOF'
 
-# ============================================================
-# QModem - Official QModem Next
-# ============================================================
+# QModem 核心
 CONFIG_PACKAGE_qmodem=y
+
+# 使用新版 QModem Next LuCI
+# CONFIG_PACKAGE_luci-app-qmodem is not set
 CONFIG_PACKAGE_luci-app-qmodem-next=y
+
+# QModem Next 必须使用 sipd
+CONFIG_PACKAGE_qmodem-sipd=y
+
+# SMS 转发
+CONFIG_PACKAGE_sms-forwarder-next=y
+
+# 保留原有 SMS / TTL
 CONFIG_PACKAGE_luci-app-qmodem-sms=y
 CONFIG_PACKAGE_luci-app-qmodem-ttl=y
+
+# Quectel 拨号组件
 CONFIG_PACKAGE_quectel-CM-5G-M=y
+
+# 本次不启用 VOIP
+# CONFIG_PACKAGE_qmodem-voip is not set
+
 EOF
 
-echo ">>> [qmodem] 保持官方 Makefile，不修改 sipd/voip 依赖"
+echo ">>> [qmodem] QModem Next 配置完成"
 
-# 检查 QModem Feed
-if [ -d "feeds/qmodem" ]; then
-    echo "✅ feeds/qmodem 存在"
-else
-    echo "❌ feeds/qmodem 不存在"
-    exit 1
-fi
+echo ">>> [qmodem] 当前配置："
+grep -E \
+  '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|sms-forwarder-next|quectel-CM-5G-M)' \
+  .config || true
 
-echo ">>> [qmodem] 完成"
 
 # ════════════════════════════════════════════════════════════
 # 通用设置（所有设备共享）
@@ -122,6 +138,7 @@ echo ">>> [2] 默认主题修改完成"
 find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
 
 echo ">>> [3] Lucky 权限修复完成"
+
 
 # ════════════════════════════════════════════════════════════
 # ★ Fix-songloft：修复 songloft 启动脚本（终极实测完美版）
@@ -167,7 +184,6 @@ start_instance() {
 
     mkdir -p "$db_path"
 
-    # ★★★ 终极软链接兜底（无论程序逻辑怎么变，都指向真实路径） ★★★
     if [ -d "$music_dir" ]; then
         if [ ! -e "$web_path/music" ]; then
             ln -sf "$music_dir" "$web_path/music"
@@ -213,12 +229,12 @@ reload_service() {
     stop
     start
 }
-
 EOF
 
 chmod +x files/etc/init.d/songloft
 
 echo ">>> [3.5] songloft 启动脚本修复完成"
+
 
 # ════════════════════════════════════════════════════════════
 # ★ 直接修改 luci-app-songloft 源码包，注入音乐路径选项
@@ -229,12 +245,9 @@ echo ">>> [3.6] 修改 luci-app-songloft 源码包，添加音乐路径选项...
 LUCI_SONGLOFT_DIR="package/luci-app-songloft"
 
 if [ -d "$LUCI_SONGLOFT_DIR" ]; then
-
     FOUND=0
 
-    # ★ 使用 grep 搜索源码包中所有包含 Map("songloft") 的 .lua 文件并强制覆盖
     for file in $(grep -rl --include="*.lua" 'Map("songloft"' "$LUCI_SONGLOFT_DIR" 2>/dev/null); do
-
         echo "  ✓ 找到并覆盖: $file"
 
         cat > "$file" << 'EOF'
@@ -268,7 +281,6 @@ o = s:option(Value, "db_path", translate("数据目录"))
 o.default = "/etc/songloft/data"
 o.description = translate("SongLoft 的工作目录，用于存放数据库及音乐索引")
 
--- ★ 新增：音乐库目录选项
 o = s:option(Value, "music_dir", translate("音乐库目录（绝对路径）"))
 o.default = "/mnt/sda1/music"
 o.rmempty = false
@@ -304,7 +316,6 @@ EOF
     done
 
     if [ "$FOUND" -eq 0 ]; then
-
         echo "  ⚠️ 未找到原始 config.lua，在 root/ 中创建..."
 
         mkdir -p "$LUCI_SONGLOFT_DIR/root/usr/lib/lua/luci/model/cbi/songloft"
@@ -370,18 +381,16 @@ end
 
 return m
 EOF
-
     fi
 
     echo ">>> [3.6] Songloft 原生 LuCI 增强完成"
-
 else
     echo "  ❌ 找不到 $LUCI_SONGLOFT_DIR，跳过修改"
 fi
 
+
 # ════════════════════════════════════════════════════════════
 # ★ Fix-songloft-cache：强制清除 luci-app-songloft 编译缓存
-# 防止因 GitHub Actions 缓存导致旧界面被打包进去
 # ════════════════════════════════════════════════════════════
 
 echo ">>> [3.7] 强制清理 luci-app-songloft 编译缓存..."
@@ -392,12 +401,14 @@ find tmp -maxdepth 2 -name "luci-app-songloft*" -exec rm -rf {} + 2>/dev/null ||
 
 echo ">>> [3.7] 缓存清理完成"
 
+
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
 net.ipv4.tcp_congestion_control=bbr
 EOF
 
 echo ">>> [8] sysctl 优化完成"
+
 
 cat > files/etc/config/msd_lite << 'EOF'
 config msd_lite 'config'
@@ -412,9 +423,9 @@ EOF
 
 echo ">>> [9-1] msd_lite UCI 配置写入完成"
 
+
 cat > files/etc/init.d/msd_lite << 'INITEOF'
 #!/bin/sh /etc/rc.common
-
 START=99
 USE_PROCD=1
 
@@ -436,41 +447,51 @@ start_service() {
     mkdir -p /var/etc
 
     if [ "$type" = "0" ]; then
+
         PROG="/usr/bin/msd_lite"
 
         cat > /var/etc/msd_lite.conf << XMLEOF
 <?xml version="1.0" encoding="utf-8"?>
 <msd>
   <log><file>/var/log/msd_lite.log</file></log>
+
   <threadPool>
     <threadsCountMax>${threads}</threadsCountMax>
     <fBindToCPU>yes</fBindToCPU>
   </threadPool>
+
   <HTTP>
     <bindList>
       <bind><address>0.0.0.0:${port}</address></bind>
       <bind><address>[::]:${port}</address></bind>
     </bindList>
-    <hostnameList><hostname>*</hostname></hostnameList>
+
+    <hostnameList>
+      <hostname>*</hostname>
+    </hostnameList>
   </HTTP>
+
   <hubProfileList>
     <hubProfile>
       <fDropSlowClients>no</fDropSlowClients>
       <fSocketTCPNoDelay>yes</fSocketTCPNoDelay>
       <precache>${buffer}</precache>
       <ringBufSize>1024</ringBufSize>
+
       <headersList>
         <header>Pragma: no-cache</header>
         <header>Content-Type: video/mpeg</header>
       </headersList>
     </hubProfile>
   </hubProfileList>
+
   <sourceProfileList>
     <sourceProfile>
       <skt>
         <rcvBuf>512</rcvBuf>
         <rcvTimeout>2</rcvTimeout>
       </skt>
+
       <multicast>
         <ifName>${source}</ifName>
         <rejoinTime>${rejointime}</rejoinTime>
@@ -641,6 +662,7 @@ EOF
     echo "========================================"
 
     ;;
+
 
 # ──────────────────────────────────────────
 # RE-SP-01B（MT7621 MIPS · 512MB RAM）
