@@ -658,11 +658,104 @@ jobs:
 
           [ "$STATUS" -eq 0 ] || exit "$STATUS"
 
-          # ★ 强制关闭 qmodem-sipd 和 qmodem-voip (防止 make defconfig 重新开启)
+     # ==========================================================
+          # ★ QModem Next 最终配置
+          #
+          # 旧版 luci-app-qmodem 与新版 luci-app-qmodem-next
+          # 会争抢同一个 11_modem.js 文件，绝不能同时安装。
+          #
+          # luci-app-qmodem-next 依赖 qmodem-sipd，
+          # 因此 sipd 必须保留。
+          # ==========================================================
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📡 QMODEM FINAL CONFIG"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # 删除可能来自旧 config / defconfig 的状态
           sed -i \
-            -e 's/^CONFIG_PACKAGE_qmodem-sipd=y/# CONFIG_PACKAGE_qmodem-sipd is not set/' \
-            -e 's/^CONFIG_PACKAGE_qmodem-voip=y/# CONFIG_PACKAGE_qmodem-voip is not set/' \
+            -e '/^CONFIG_PACKAGE_luci-app-qmodem=/d' \
+            -e '/^CONFIG_PACKAGE_luci-app-qmodem-next=/d' \
+            -e '/^CONFIG_PACKAGE_qmodem=/d' \
+            -e '/^CONFIG_PACKAGE_qmodem-sipd=/d' \
+            -e '/^CONFIG_PACKAGE_qmodem-voip=/d' \
+            -e '/^CONFIG_PACKAGE_sms-forwarder-next=/d' \
+            -e '/^CONFIG_PACKAGE_luci-app-qmodem-sms=/d' \
+            -e '/^CONFIG_PACKAGE_luci-app-qmodem-ttl=/d' \
+            -e '/^CONFIG_PACKAGE_quectel-CM-5G-M=/d' \
             .config
+
+          cat >> .config << 'EOF'
+
+          CONFIG_PACKAGE_qmodem=y
+
+          # 新版 QModem Next
+          # CONFIG_PACKAGE_luci-app-qmodem is not set
+          CONFIG_PACKAGE_luci-app-qmodem-next=y
+
+          # QModem Next 必须依赖 sipd
+          CONFIG_PACKAGE_qmodem-sipd=y
+
+          # SMS Forwarder Next
+          CONFIG_PACKAGE_sms-forwarder-next=y
+
+          # 保留原有 QModem SMS / TTL
+          CONFIG_PACKAGE_luci-app-qmodem-sms=y
+          CONFIG_PACKAGE_luci-app-qmodem-ttl=y
+
+          # Quectel 拨号组件
+          CONFIG_PACKAGE_quectel-CM-5G-M=y
+
+          # 本次测试不启用 VOIP
+          # CONFIG_PACKAGE_qmodem-voip is not set
+
+          EOF
+
+          # 再运行一次 defconfig，让依赖关系完整解析
+          make defconfig \
+            2>&1 |
+            tee -a "$LOG_DIR/defconfig-qmodem.log"
+
+          STATUS=${PIPESTATUS[0]}
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "❌ QModem defconfig 失败"
+            exit "$STATUS"
+          fi
+
+          echo
+          echo "── QMODEM FINAL STATUS ──"
+
+          grep -E \
+            '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|sms-forwarder-next|quectel-CM-5G-M)' \
+            .config |
+            tee "$LOG_DIR/final-qmodem.txt" || true
+
+          echo
+          echo "── QMODEM CONFLICT CHECK ──"
+
+          if grep -q '^CONFIG_PACKAGE_luci-app-qmodem=y' .config; then
+            echo "❌ ERROR：旧版 luci-app-qmodem 仍然启用"
+            exit 1
+          fi
+
+          if ! grep -q '^CONFIG_PACKAGE_luci-app-qmodem-next=y' .config; then
+            echo "❌ ERROR：luci-app-qmodem-next 未启用"
+            exit 1
+          fi
+
+          if ! grep -q '^CONFIG_PACKAGE_qmodem-sipd=y' .config; then
+            echo "❌ ERROR：qmodem-sipd 未启用"
+            exit 1
+          fi
+
+          if ! grep -q '^CONFIG_PACKAGE_sms-forwarder-next=y' .config; then
+            echo "❌ ERROR：sms-forwarder-next 未启用"
+            exit 1
+          fi
+
+          echo "✅ QModem Next 配置检查通过"
 
           echo
           echo "── TARGET ──"
