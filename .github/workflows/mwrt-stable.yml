@@ -1052,7 +1052,7 @@ jobs:
             \) \
             -print | sort
 
-      # ============================================================
+           # ============================================================
       # 24. 整理 Release 文件
       # ============================================================
       - name: 📦 整理固件
@@ -1067,13 +1067,11 @@ jobs:
           DEVICE="${{ inputs.device }}"
           KERNEL="${{ inputs.kernel }}"
 
-          TARGET_DIR="bin/targets"
-
           echo "=============================================="
           echo "📦 整理固件"
           echo "=============================================="
 
-          find "$TARGET_DIR" -type f \
+          find bin/targets -type f \
             \( \
               -name '*.bin' -o \
               -name '*.itb' -o \
@@ -1088,50 +1086,73 @@ jobs:
 
           ls -lah "${GITHUB_WORKSPACE}/release"
 
+          if ! find "${GITHUB_WORKSPACE}/release" -type f \
+            \( \
+              -name '*.bin' -o \
+              -name '*.itb' -o \
+              -name '*.img' -o \
+              -name '*.gz' -o \
+              -name '*.zip' \
+            \) | grep -q .; then
+
+            echo "❌ 没有找到任何固件文件"
+            exit 1
+          fi
+
           # --------------------------------------------------------
           # 保存编译信息
+          # 使用 printf，避免 YAML heredoc 缩进问题
           # --------------------------------------------------------
 
-          cat > "${GITHUB_WORKSPACE}/release/BUILD_INFO.txt" <<EOF
-      ==========================================
-      DONGZAI MWRT-STABLE
-      ==========================================
+          printf '%s\n' \
+            '==========================================' \
+            'DONGZAI MWRT-STABLE' \
+            '==========================================' \
+            '' \
+            'Device:' \
+            "${DEVICE}" \
+            '' \
+            'Kernel:' \
+            "Linux ${KERNEL}" \
+            '' \
+            'Build mode:' \
+            "${{ inputs.build_mode }}" \
+            '' \
+            'Build time:' \
+            "${BUILD_TIME} seconds" \
+            '' \
+            'Source:' \
+            'https://github.com/coolsnowwolf/lede' \
+            '' \
+            'Branch:' \
+            'master' \
+            '' \
+            'QModem:' \
+            'https://github.com/FUjr/QModem' \
+            '' \
+            'Workflow:' \
+            "${GITHUB_WORKFLOW}" \
+            '' \
+            'Commit:' \
+            "${GITHUB_SHA}" \
+            '' \
+            'Build date:' \
+            "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
+            '' \
+            '==========================================' \
+            > "${GITHUB_WORKSPACE}/release/BUILD_INFO.txt"
 
-      Device:
-      ${DEVICE}
+          echo
+          echo "📄 BUILD_INFO.txt："
+          cat "${GITHUB_WORKSPACE}/release/BUILD_INFO.txt"
 
-      Kernel:
-      Linux ${KERNEL}
-
-      Build mode:
-      ${{ inputs.build_mode }}
-
-      Build time:
-      ${BUILD_TIME} seconds
-
-      Source:
-      https://github.com/coolsnowwolf/lede
-
-      Branch:
-      master
-
-      QModem:
-      https://github.com/FUjr/QModem
-
-      Workflow:
-      ${GITHUB_WORKFLOW}
-
-      Commit:
-      ${GITHUB_SHA}
-
-      Build date:
-      $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-
-      ==========================================
-      EOF
+          echo
+          echo "=============================================="
+          echo "✅ 固件整理完成"
+          echo "=============================================="
 
       # ============================================================
-      # 25. GitHub Actions Artifact
+      # 25. 上传 Actions Artifact
       # ============================================================
       - name: 📤 上传 Actions 固件
         uses: actions/upload-artifact@v4
@@ -1142,7 +1163,7 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # 26. 创建 Release
+      # 26. 上传 GitHub Release
       # ============================================================
       - name: 🚀 上传 GitHub Release
         uses: softprops/action-gh-release@v2
@@ -1168,20 +1189,25 @@ jobs:
             QModem：
             https://github.com/FUjr/QModem
 
+            ## 说明
+
+            本固件为 MWRT-STABLE 稳定测试版本。
+
             ## QModem
 
-            使用：
+            使用新版：
 
             - qmodem
             - luci-app-qmodem-next
             - sms-forwarder-next
             - quectel-CM-5G-M
 
-            并关闭旧版 QModem UI。
+            同时关闭旧版 QModem UI 和旧版 SIP/VOIP 组件。
 
             ## WWAN
 
-            固件尽量包含：
+            根据当前 LEDE 源码实际提供的驱动，
+            尽可能包含：
 
             - QMI
             - MBIM
@@ -1194,31 +1220,18 @@ jobs:
             - Sierra
             - WDM
             - PPP
-            - MHI / PCIe（如果当前源码提供）
+            - PCIe / MHI
 
-            ## 注意
-
-            第一次刷入建议先完整测试：
-
-            1. WAN
-            2. QModem 自动识别
-            3. 自动 APN
-            4. QMI
-            5. MBIM
-            6. NCM
-            7. SMS
-            8. Wi-Fi
-            9. Docker
-            10. IPTV
-            11. Lucky
-            12. OpenClash
+            ==========================================
+            DONGZAI MWRT-STABLE
+            ==========================================
 
           files: release/*
           fail_on_unmatched_files: true
           generate_release_notes: false
 
       # ============================================================
-      # 27. 编译诊断
+      # 27. 编译后诊断
       # ============================================================
       - name: 🩺 编译后诊断
         if: always()
@@ -1231,7 +1244,7 @@ jobs:
           echo "=============================================="
 
           echo
-          echo "📌 内核："
+          echo "📌 内核配置："
           grep -E \
             'CONFIG_(LINUX_6_1|LINUX_6_6|TESTING_KERNEL)' \
             .config 2>/dev/null || true
@@ -1244,17 +1257,15 @@ jobs:
 
           echo
           echo "📌 TARGET："
-          grep '^CONFIG_TARGET_' .config 2>/dev/null | head -80 || true
+          grep '^CONFIG_TARGET_' \
+            .config 2>/dev/null | head -80 || true
 
           echo
-          echo "📌 最近失败信息："
+          echo "📌 Patch reject："
 
           find build_dir \
             -type f \
-            \( \
-              -name '*.rej' -o \
-              -name '*.log' \
-            \) \
+            -name '*.rej' \
             2>/dev/null \
             | head -50 || true
 
@@ -1264,7 +1275,7 @@ jobs:
           echo "=============================================="
 
       # ============================================================
-      # 28. 保存失败日志
+      # 28. 编译失败日志
       # ============================================================
       - name: 🧾 上传失败日志
         if: failure()
@@ -1278,4 +1289,3 @@ jobs:
             openwrt/build_dir/**/.rej
           if-no-files-found: ignore
           retention-days: 7
-          
