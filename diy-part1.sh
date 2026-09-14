@@ -11,7 +11,7 @@ set -euo pipefail
 echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" \
 >> feeds.conf.default
 
-echo "src-git qmodem https://github.com/FUjr/modem_feeds.git;main" \
+echo "src-git qmodem https://github.com/FUjr/QModem.git;main" \
 >> feeds.conf.default
 
 echo "src-git rtp2httpd https://github.com/stackia/rtp2httpd.git" \
