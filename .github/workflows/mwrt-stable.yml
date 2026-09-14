@@ -1,0 +1,1281 @@
+name: 🏗️ MWRT-STABLE 固件工厂
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      device:
+        description: '📦 目标设备'
+        required: true
+        default: 'wh3000pro'
+        type: choice
+        options:
+          - wh3000
+          - wh3000pro
+          - re-sp-01b
+
+      kernel:
+        description: '🐧 Linux 内核版本'
+        required: true
+        default: '6.6'
+        type: choice
+        options:
+          - '6.6'
+          - '6.1'
+
+      build_mode:
+        description: '⚡ 编译模式'
+        required: true
+        default: 'fast'
+        type: choice
+        options:
+          - fast
+          - clean
+
+
+env:
+
+  # ============================================================
+  # LEDE
+  # ============================================================
+
+  LEDE_REPO: https://github.com/coolsnowwolf/lede
+  LEDE_BRANCH: master
+
+  # ============================================================
+  # 编译
+  # ============================================================
+
+  MAKE_JOBS: 4
+
+  # ============================================================
+  # 日志
+  # ============================================================
+
+  LOG_DIR: /tmp/mwrt-stable-logs
+
+  # ============================================================
+  # ccache
+  # ============================================================
+
+  CCACHE_MAXSIZE: 5G
+  CCACHE_COMPRESS: 1
+
+
+jobs:
+
+  build:
+
+    name: "🏗️ STABLE-${{ github.event.inputs.device }}-K${{ github.event.inputs.kernel }}"
+
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+
+
+    steps:
+
+      # ==========================================================
+      # 01. 工厂信息
+      # ==========================================================
+
+      - name: 🎯 MWRT-STABLE 工厂信息
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$LOG_DIR"
+
+          DEVICE="${{ github.event.inputs.device }}"
+          KERNEL="${{ github.event.inputs.kernel }}"
+          BUILD_MODE="${{ github.event.inputs.build_mode }}"
+
+          case "$DEVICE" in
+
+            wh3000)
+              DNAME="华硅 WH3000"
+              DSPEC="MT7981 ARM64 · 512MB RAM · eMMC"
+              ;;
+
+            wh3000pro)
+              DNAME="华硅 WH3000 Pro"
+              DSPEC="MT7981 ARM64 · 512MB RAM · eMMC"
+              ;;
+
+            re-sp-01b)
+              DNAME="京东云无线宝 RE-SP-01B"
+              DSPEC="MT7621 MIPS · 512MB RAM · 128GB eMMC"
+              ;;
+
+            *)
+              echo "❌ 未知设备：$DEVICE"
+              exit 1
+              ;;
+
+          esac
+
+
+          case "$KERNEL" in
+
+            6.6)
+              KERNEL_NAME="Linux 6.6 Stable"
+              ;;
+
+            6.1)
+              KERNEL_NAME="Linux 6.1 Compatibility"
+              ;;
+
+            *)
+              echo "❌ 不支持的 Kernel：$KERNEL"
+              exit 1
+              ;;
+
+          esac
+
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🏗️ MWRT-STABLE 固件工厂"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo
+          echo "📦 Device      : $DNAME"
+          echo "🔧 Hardware    : $DSPEC"
+          echo "🐧 Kernel      : $KERNEL_NAME"
+          echo "⚡ Build Mode  : $BUILD_MODE"
+          echo "🧵 MAKE_JOBS   : $MAKE_JOBS"
+          echo "📡 QModem      : Latest / Next"
+          echo "🕐 Time        : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo
+
+
+          {
+            echo "DEVICE=$DEVICE"
+            echo "KERNEL=$KERNEL"
+            echo "BUILD_MODE=$BUILD_MODE"
+            echo "DNAME=$DNAME"
+            echo "DSPEC=$DSPEC"
+            echo "KERNEL_NAME=$KERNEL_NAME"
+            echo "MAKE_JOBS=$MAKE_JOBS"
+          } > "$LOG_DIR/environment.txt"
+
+
+      # ==========================================================
+      # 02. 检出稳定仓库
+      # ==========================================================
+
+      - name: 📥 检出 MWRT-STABLE
+        uses: actions/checkout@v4
+
+
+      # ==========================================================
+      # 03. 基础文件检查
+      # ==========================================================
+
+      - name: 🔎 检查稳定版配置
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          DEVICE="${{ github.event.inputs.device }}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔎 检查 MWRT-STABLE 文件"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+          test -f "$DEVICE.config" || {
+            echo "❌ 缺少 $DEVICE.config"
+            exit 1
+          }
+
+
+          test -f diy-part1.sh || {
+            echo "❌ 缺少 diy-part1.sh"
+            exit 1
+          }
+
+
+          test -f diy-part2.sh || {
+            echo "❌ 缺少 diy-part2.sh"
+            exit 1
+          }
+
+
+          echo "✅ $DEVICE.config"
+          echo "✅ diy-part1.sh"
+          echo "✅ diy-part2.sh"
+
+
+          {
+            echo "========== CONFIG =========="
+            sha256sum "$DEVICE.config"
+
+            echo
+            echo "========== DIY1 =========="
+            sha256sum diy-part1.sh
+
+            echo
+            echo "========== DIY2 =========="
+            sha256sum diy-part2.sh
+
+          } | tee "$LOG_DIR/input-hash.txt"
+
+
+      # ==========================================================
+      # 04. 清理 Runner
+      # ==========================================================
+
+      - name: 🧹 释放 Runner 空间
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL \
+            || true
+
+
+          sudo docker image prune -a -f || true
+          sudo apt-get clean || true
+
+
+          echo
+          echo "========== DISK =========="
+          df -h
+
+
+          echo
+          echo "========== MEMORY =========="
+          free -h
+
+
+      # ==========================================================
+      # 05. 编译环境
+      # ==========================================================
+
+      - name: ⚙️ 初始化编译环境
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          sudo apt-get update -q
+
+
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            git \
+            libncurses5-dev \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            python3-pyelftools \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            ccache \
+            cmake \
+            ninja-build \
+            jq \
+            rename \
+            libelf-dev \
+            device-tree-compiler \
+            bc \
+            time \
+            xz-utils \
+            zip \
+            tar \
+            gzip
+
+
+          echo
+          git --version
+          gcc --version | head -1
+          clang --version | head -1
+          ccache --version | head -1
+          python3 --version
+
+
+      # ==========================================================
+      # 06. Clean 模式
+      # ==========================================================
+
+      - name: 🧹 Clean 模式
+        if: github.event.inputs.build_mode == 'clean'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧹 CLEAN MODE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+          rm -rf openwrt
+          rm -rf ~/.ccache
+
+
+          echo "✅ OpenWrt 工作目录已清理"
+          echo "✅ ccache 已清理"
+
+
+      # ==========================================================
+      # 07. 获取最新 LEDE master
+      # ==========================================================
+
+      - name: 📦 获取最新 LEDE master
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          rm -rf openwrt
+
+
+          git clone \
+            --depth=1 \
+            --single-branch \
+            -b "$LEDE_BRANCH" \
+            "$LEDE_REPO" \
+            openwrt
+
+
+          cd openwrt
+
+
+          LEDE_COMMIT="$(git rev-parse HEAD)"
+          LEDE_SHORT="$(git rev-parse --short HEAD)"
+
+
+          echo "LEDE_COMMIT=$LEDE_COMMIT" >> "$GITHUB_ENV"
+          echo "LEDE_SHORT=$LEDE_SHORT" >> "$GITHUB_ENV"
+
+
+          {
+            echo "LEDE_REPO=$LEDE_REPO"
+            echo "LEDE_BRANCH=$LEDE_BRANCH"
+            echo "LEDE_COMMIT=$LEDE_COMMIT"
+            echo "LEDE_SHORT=$LEDE_SHORT"
+            echo
+            git log --oneline -5
+          } | tee "$LOG_DIR/lede-source.txt"
+
+
+      # ==========================================================
+      # 08. Kernel 基线预检查
+      # ==========================================================
+
+      - name: 🐧 检查 Kernel 基线
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd openwrt
+
+          KERNEL="${{ github.event.inputs.kernel }}"
+          DEVICE="${{ github.event.inputs.device }}"
+
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🐧 KERNEL BASELINE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Device : $DEVICE"
+          echo "Kernel : $KERNEL"
+          echo
+
+
+          echo "── MediaTek 当前 upstream 设置 ──"
+
+          if [ -f target/linux/mediatek/Makefile ]; then
+            grep -E \
+              'KERNEL_PATCHVER|KERNEL_TESTING_PATCHVER' \
+              target/linux/mediatek/Makefile \
+              || true
+          fi
+
+
+          echo
+          echo "── Generic Kernel 配置 ──"
+
+
+          test -f "target/linux/generic/config-${KERNEL}" || {
+            echo
+            echo "❌ LEDE 当前源码没有 generic/config-${KERNEL}"
+            echo
+            exit 1
+          }
+
+
+          echo "✅ generic/config-${KERNEL} 存在"
+
+
+          echo
+          echo "── Target Kernel 目录检查 ──"
+
+
+          if [ -d "target/linux/mediatek" ]; then
+            echo "✅ MediaTek target 存在"
+          else
+            echo "❌ MediaTek target 不存在"
+            exit 1
+          fi
+
+
+          if [ "$KERNEL" = "6.6" ]; then
+
+            if [ -d "target/linux/mediatek/patches-6.6" ]; then
+              echo "✅ MediaTek 6.6 patchset 存在"
+            else
+              echo "⚠️ MediaTek 6.6 patchset 当前未发现"
+              echo "❌ 为保证稳定性，本次停止，而不是强行编译"
+              exit 1
+            fi
+
+          fi
+
+
+          if [ "$KERNEL" = "6.1" ]; then
+
+            if [ -d "target/linux/mediatek/patches-6.1" ]; then
+              echo "✅ MediaTek 6.1 patchset 存在"
+            else
+              echo "⚠️ MediaTek 6.1 patchset 当前未发现"
+              echo
+              echo "❌ 当前 LEDE master 不具备完整 MediaTek 6.1 target 支持"
+              echo "❌ 为保证稳定性，不允许直接拿 6.1 kernel tarball 硬编"
+              exit 1
+            fi
+
+          fi
+
+
+          echo
+          echo "✅ Kernel 基线预检查完成"
+
+
+      # ==========================================================
+      # 09. 设置 Kernel
+      # ==========================================================
+
+      - name: 🐧 应用 Kernel 选择
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd openwrt
+
+          KERNEL="${{ github.event.inputs.kernel }}"
+
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🐧 应用 Kernel = $KERNEL"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+          sed -i \
+            -e '/^CONFIG_LINUX_6_1=/d' \
+            -e '/^CONFIG_LINUX_6_6=/d' \
+            -e '/^CONFIG_LINUX_6_12=/d' \
+            -e '/^CONFIG_LINUX_6_18=/d' \
+            -e '/^CONFIG_TESTING_KERNEL=/d' \
+            .config 2>/dev/null || true
+
+
+          case "$KERNEL" in
+
+            6.6)
+
+              echo "CONFIG_LINUX_6_6=y" >> .config
+              ;;
+
+            6.1)
+
+              echo "CONFIG_LINUX_6_1=y" >> .config
+              ;;
+
+            *)
+
+              echo "❌ Kernel 参数错误"
+              exit 1
+              ;;
+
+          esac
+
+
+          {
+            echo "KERNEL=$KERNEL"
+            echo
+            grep -E \
+              'CONFIG_LINUX_|CONFIG_TESTING_KERNEL' \
+              .config || true
+
+          } | tee "$LOG_DIR/kernel-config.txt"
+                # ============================================================
+      # 10. 加载设备配置
+      # ============================================================
+      - name: 📦 加载设备配置
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          case "${{ inputs.device }}" in
+            wh3000)
+              CONFIG_FILE="${GITHUB_WORKSPACE}/wh3000.config"
+              ;;
+            wh3000pro)
+              CONFIG_FILE="${GITHUB_WORKSPACE}/wh3000pro.config"
+              ;;
+            re-sp-01b)
+              CONFIG_FILE="${GITHUB_WORKSPACE}/re-sp-01b.config"
+              ;;
+            *)
+              echo "❌ 未知设备: ${{ inputs.device }}"
+              exit 1
+              ;;
+          esac
+
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "❌ 找不到设备配置:"
+            echo "$CONFIG_FILE"
+            exit 1
+          fi
+
+          echo "=============================================="
+          echo "📦 当前设备：${{ inputs.device }}"
+          echo "📄 配置文件：$CONFIG_FILE"
+          echo "=============================================="
+
+          cp "$CONFIG_FILE" .config
+
+          echo
+          echo "🎯 原始 TARGET 配置："
+          grep '^CONFIG_TARGET_' .config || true
+
+      # ============================================================
+      # 11. 内核选择
+      # ============================================================
+      - name: 🧠 设置稳定内核
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          KERNEL="${{ inputs.kernel }}"
+
+          echo "=============================================="
+          echo "🧠 用户选择内核：Linux ${KERNEL}"
+          echo "=============================================="
+
+          case "$KERNEL" in
+            "6.6")
+              echo "CONFIG_LINUX_6_6=y" >> .config
+              echo "# CONFIG_LINUX_6_1 is not set" >> .config
+              ;;
+            "6.1")
+              echo "CONFIG_LINUX_6_1=y" >> .config
+              echo "# CONFIG_LINUX_6_6 is not set" >> .config
+              ;;
+            *)
+              echo "❌ 不支持的内核选择：$KERNEL"
+              exit 1
+              ;;
+          esac
+
+          # 不使用 testing kernel
+          echo "# CONFIG_TESTING_KERNEL is not set" >> .config
+
+          echo
+          echo "📌 内核相关配置："
+          grep -E 'CONFIG_(LINUX_|TESTING_KERNEL)' .config || true
+
+      # ============================================================
+      # 12. 执行 DIY1
+      # ============================================================
+      - name: 🔧 执行 DIY1
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          if [ ! -f "${GITHUB_WORKSPACE}/diy-part1.sh" ]; then
+            echo "❌ diy-part1.sh 不存在"
+            exit 1
+          fi
+
+          chmod +x "${GITHUB_WORKSPACE}/diy-part1.sh"
+
+          echo "=============================================="
+          echo "🔧 执行 diy-part1.sh"
+          echo "=============================================="
+
+          bash "${GITHUB_WORKSPACE}/diy-part1.sh"
+
+      # ============================================================
+      # 13. 更新 feeds
+      # ============================================================
+      - name: 📡 更新软件源
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "📡 更新 feeds"
+          echo "=============================================="
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          echo
+          echo "✅ feeds 更新完成"
+
+      # ============================================================
+      # 14. 再次确认 QModem
+      # ============================================================
+      - name: 📶 检查 QModem
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "📶 QModem 检查"
+          echo "=============================================="
+
+          if [ -d "feeds/qmodem" ]; then
+            echo "✅ 找到 feeds/qmodem"
+          elif [ -d "package/feeds/qmodem" ]; then
+            echo "✅ 找到 package/feeds/qmodem"
+          else
+            echo "❌ QModem feed 不存在"
+            exit 1
+          fi
+
+          echo
+          echo "🔎 QModem 相关包："
+
+          find feeds/qmodem package/feeds/qmodem \
+            -maxdepth 2 \
+            -type f \
+            \( -name 'Makefile' -o -name '*.mk' \) \
+            2>/dev/null \
+            | sort \
+            | head -200 || true
+
+      # ============================================================
+      # 15. QModem Next + 通用 WWAN 驱动
+      # ============================================================
+      - name: 📶 配置 QModem 与通用 WWAN
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "📶 配置 QModem Next"
+          echo "=============================================="
+
+          # --------------------------------------------------------
+          # 当前 QModem 推荐架构
+          # --------------------------------------------------------
+
+          echo "CONFIG_PACKAGE_qmodem=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-qmodem-next=y" >> .config
+
+          # SMS 转发
+          echo "CONFIG_PACKAGE_sms-forwarder-next=y" >> .config
+
+          # Quectel CM
+          echo "CONFIG_PACKAGE_quectel-CM-5G-M=y" >> .config
+
+          # --------------------------------------------------------
+          # 禁止旧版 QModem UI / 旧组件
+          # --------------------------------------------------------
+
+          echo "# CONFIG_PACKAGE_luci-app-qmodem is not set" >> .config
+          echo "# CONFIG_PACKAGE_luci-app-qmodem-sms is not set" >> .config
+          echo "# CONFIG_PACKAGE_luci-app-qmodem-ttl is not set" >> .config
+
+          echo "# CONFIG_PACKAGE_qmodem-sipd is not set" >> .config
+          echo "# CONFIG_PACKAGE_qmodem-voip is not set" >> .config
+
+          echo "# CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn is not set" >> .config
+          echo "# CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn is not set" >> .config
+          echo "# CONFIG_PACKAGE_luci-i18n-qmodem-ttl-zh-cn is not set" >> .config
+
+          # --------------------------------------------------------
+          # 通用 USB WWAN
+          # --------------------------------------------------------
+
+          WWAN_PACKAGES="
+          kmod-usb-net
+          kmod-usb-net-cdc-ether
+          kmod-usb-net-cdc-mbim
+          kmod-usb-net-cdc-ncm
+          kmod-usb-net-rndis
+          kmod-usb-net-qmi-wwan
+          kmod-usb-serial
+          kmod-usb-serial-option
+          kmod-usb-serial-wwan
+          kmod-usb-serial-qualcomm
+          kmod-usb-serial-sierra
+          kmod-usb-wdm
+          kmod-qmi_wwan
+          kmod-qmi_wwan_f
+          kmod-qmi_wwan_q
+          kmod-qmi_wwan_s
+          kmod-ppp
+          ppp
+          ppp-mod-pppoe
+          "
+
+          echo
+          echo "📦 检查通用 WWAN 驱动..."
+
+          for PKG in $WWAN_PACKAGES; do
+
+            if grep -Rqs \
+              "Package: $PKG" \
+              package feeds 2>/dev/null; then
+
+              echo "  ✅ $PKG"
+              echo "CONFIG_PACKAGE_${PKG}=m" >> .config
+
+            else
+
+              echo "  ⏭️ $PKG 不存在，跳过"
+
+            fi
+
+          done
+
+          # --------------------------------------------------------
+          # PCIe / MHI
+          # --------------------------------------------------------
+
+          MHI_PACKAGES="
+          kmod-mhi-bus
+          kmod-mhi-net
+          kmod-mhi-pci-generic
+          kmod-mhi-pci
+          kmod-mhi-wwan-ctrl
+          kmod-mhi-wwan-mbim
+          kmod-mhi-wwan
+          "
+
+          echo
+          echo "📦 检查 PCIe/MHI 驱动..."
+
+          for PKG in $MHI_PACKAGES; do
+
+            if grep -Rqs \
+              "Package: $PKG" \
+              package feeds 2>/dev/null; then
+
+              echo "  ✅ $PKG"
+              echo "CONFIG_PACKAGE_${PKG}=m" >> .config
+
+            else
+
+              echo "  ⏭️ $PKG 不存在，跳过"
+
+            fi
+
+          done
+
+          echo
+          echo "=============================================="
+          echo "📶 WWAN/QModem 初步配置完成"
+          echo "=============================================="
+
+      # ============================================================
+      # 16. 执行 DIY2
+      # ============================================================
+      - name: 🔧 执行 DIY2
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          if [ ! -f "${GITHUB_WORKSPACE}/diy-part2.sh" ]; then
+            echo "❌ diy-part2.sh 不存在"
+            exit 1
+          fi
+
+          chmod +x "${GITHUB_WORKSPACE}/diy-part2.sh"
+
+          echo "=============================================="
+          echo "🔧 执行 diy-part2.sh"
+          echo "=============================================="
+
+          bash "${GITHUB_WORKSPACE}/diy-part2.sh"
+
+      # ============================================================
+      # 17. 重新确认内核选择
+      # ============================================================
+      - name: 🧠 内核最终配置检查
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          KERNEL="${{ inputs.kernel }}"
+
+          echo "=============================================="
+          echo "🧠 内核最终检查"
+          echo "=============================================="
+
+          grep -E \
+            'CONFIG_(LINUX_6_1|LINUX_6_6|TESTING_KERNEL)' \
+            .config || true
+
+          if grep -q '^CONFIG_TESTING_KERNEL=y' .config; then
+            echo "❌ 检测到 CONFIG_TESTING_KERNEL=y"
+            echo "稳定版禁止 testing kernel"
+            exit 1
+          fi
+
+          case "$KERNEL" in
+
+            "6.6")
+              if ! grep -q '^CONFIG_LINUX_6_6=y' .config; then
+                echo "❌ Linux 6.6 没有正确进入配置"
+                exit 1
+              fi
+              ;;
+
+            "6.1")
+              if ! grep -q '^CONFIG_LINUX_6_1=y' .config; then
+                echo "❌ Linux 6.1 没有正确进入配置"
+                exit 1
+              fi
+              ;;
+
+          esac
+
+      # ============================================================
+      # 18. defconfig
+      # ============================================================
+      - name: ⚙️ 执行 make defconfig
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "⚙️ 执行 make defconfig"
+          echo "=============================================="
+
+          make defconfig
+
+          echo
+          echo "=============================================="
+          echo "📋 defconfig 后 QModem"
+          echo "=============================================="
+
+          grep -E \
+            '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem-next|sms-forwarder-next|quectel-CM-5G-M)' \
+            .config || true
+
+      # ============================================================
+      # 19. QModem 最终依赖检查
+      # ============================================================
+      - name: 📶 QModem 最终检查
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "📶 QModem 最终配置"
+          echo "=============================================="
+
+          grep -E \
+            '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|sms-forwarder|quectel-CM)' \
+            .config || true
+
+          echo
+          echo "📌 旧 QModem 应保持关闭："
+
+          grep -E \
+            '^# CONFIG_PACKAGE_(luci-app-qmodem=|luci-app-qmodem-sms=|luci-app-qmodem-ttl=|qmodem-sipd=|qmodem-voip=)' \
+            .config || true
+
+      # ============================================================
+      # 20. 最终 TARGET 检查
+      # ============================================================
+      - name: 🎯 最终设备检查
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "🎯 最终 TARGET"
+          echo "=============================================="
+
+          grep '^CONFIG_TARGET_' .config | grep -E \
+            'TARGET_(mediatek|ramips)|DEVICE_' || true
+
+          case "${{ inputs.device }}" in
+
+            wh3000)
+              grep -q \
+                '^CONFIG_TARGET_mediatek_filogic_DEVICE_huasifei_wh3000-emmc=y' \
+                .config || {
+                  echo "❌ WH3000 TARGET 错误"
+                  exit 1
+                }
+              ;;
+
+            wh3000pro)
+              grep -q \
+                '^CONFIG_TARGET_mediatek_filogic_DEVICE_huasifei_wh3000-pro=y' \
+                .config || {
+                  echo "❌ WH3000 Pro TARGET 错误"
+                  exit 1
+                }
+              ;;
+
+            re-sp-01b)
+              grep -q \
+                '^CONFIG_TARGET_ramips_mt7621_DEVICE_jdcloud_re-sp-01b=y' \
+                .config || {
+                  echo "❌ RE-SP-01B TARGET 错误"
+                  exit 1
+                }
+              ;;
+
+          esac
+
+          echo "✅ TARGET 检查通过"
+                # ============================================================
+      # 21. 下载依赖
+      # ============================================================
+      - name: 📥 下载源码包
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "📥 开始下载源码包"
+          echo "=============================================="
+
+          make download -j${MAKE_JOBS} || \
+          make download -j1 V=s
+
+      # ============================================================
+      # 22. 编译
+      # ============================================================
+      - name: 🏗️ 编译固件
+        shell: bash
+        env:
+          FORCE_UNSAFE_CONFIGURE: 1
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "🏗️ DONGZAI MWRT-STABLE"
+          echo "=============================================="
+          echo "设备：${{ inputs.device }}"
+          echo "内核：Linux ${{ inputs.kernel }}"
+          echo "模式：${{ inputs.build_mode }}"
+          echo "线程：${MAKE_JOBS}"
+          echo "=============================================="
+
+          START_TIME=$(date +%s)
+
+          make -j${MAKE_JOBS} \
+            V=s
+
+          END_TIME=$(date +%s)
+          BUILD_TIME=$((END_TIME - START_TIME))
+
+          echo
+          echo "=============================================="
+          echo "✅ 编译成功"
+          echo "⏱️ 编译耗时：${BUILD_TIME} 秒"
+          echo "=============================================="
+
+          echo "BUILD_TIME=${BUILD_TIME}" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 23. 查找固件
+      # ============================================================
+      - name: 🔎 查找固件
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "=============================================="
+          echo "🔎 固件列表"
+          echo "=============================================="
+
+          find bin/targets -type f \
+            \( \
+              -name '*.bin' -o \
+              -name '*.itb' -o \
+              -name '*.img' -o \
+              -name '*.gz' -o \
+              -name '*.zip' \
+            \) \
+            -print | sort
+
+      # ============================================================
+      # 24. 整理 Release 文件
+      # ============================================================
+      - name: 📦 整理固件
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          mkdir -p "${GITHUB_WORKSPACE}/release"
+
+          DEVICE="${{ inputs.device }}"
+          KERNEL="${{ inputs.kernel }}"
+
+          TARGET_DIR="bin/targets"
+
+          echo "=============================================="
+          echo "📦 整理固件"
+          echo "=============================================="
+
+          find "$TARGET_DIR" -type f \
+            \( \
+              -name '*.bin' -o \
+              -name '*.itb' -o \
+              -name '*.img' -o \
+              -name '*.gz' -o \
+              -name '*.zip' \
+            \) \
+            -exec cp -v {} "${GITHUB_WORKSPACE}/release/" \;
+
+          echo
+          echo "📋 Release 文件："
+
+          ls -lah "${GITHUB_WORKSPACE}/release"
+
+          # --------------------------------------------------------
+          # 保存编译信息
+          # --------------------------------------------------------
+
+          cat > "${GITHUB_WORKSPACE}/release/BUILD_INFO.txt" <<EOF
+      ==========================================
+      DONGZAI MWRT-STABLE
+      ==========================================
+
+      Device:
+      ${DEVICE}
+
+      Kernel:
+      Linux ${KERNEL}
+
+      Build mode:
+      ${{ inputs.build_mode }}
+
+      Build time:
+      ${BUILD_TIME} seconds
+
+      Source:
+      https://github.com/coolsnowwolf/lede
+
+      Branch:
+      master
+
+      QModem:
+      https://github.com/FUjr/QModem
+
+      Workflow:
+      ${GITHUB_WORKFLOW}
+
+      Commit:
+      ${GITHUB_SHA}
+
+      Build date:
+      $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+      ==========================================
+      EOF
+
+      # ============================================================
+      # 25. GitHub Actions Artifact
+      # ============================================================
+      - name: 📤 上传 Actions 固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: MWRT-STABLE-${{ inputs.device }}-kernel-${{ inputs.kernel }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+      # ============================================================
+      # 26. 创建 Release
+      # ============================================================
+      - name: 🚀 上传 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: stable-${{ inputs.device }}-kernel-${{ inputs.kernel }}-${{ github.run_number }}
+          name: "MWRT-STABLE ${{ inputs.device }} Linux ${{ inputs.kernel }} #${{ github.run_number }}"
+          body: |
+            # 🏗️ DONGZAI MWRT-STABLE
+
+            ## 固件信息
+
+            - 设备：`${{ inputs.device }}`
+            - 内核：`Linux ${{ inputs.kernel }}`
+            - 编译模式：`${{ inputs.build_mode }}`
+            - 编译编号：`${{ github.run_number }}`
+            - 编译耗时：`${{ env.BUILD_TIME }} 秒`
+
+            ## 源码
+
+            LEDE：
+            https://github.com/coolsnowwolf/lede
+
+            QModem：
+            https://github.com/FUjr/QModem
+
+            ## QModem
+
+            使用：
+
+            - qmodem
+            - luci-app-qmodem-next
+            - sms-forwarder-next
+            - quectel-CM-5G-M
+
+            并关闭旧版 QModem UI。
+
+            ## WWAN
+
+            固件尽量包含：
+
+            - QMI
+            - MBIM
+            - NCM
+            - ECM
+            - RNDIS
+            - USB Serial
+            - Option
+            - Qualcomm
+            - Sierra
+            - WDM
+            - PPP
+            - MHI / PCIe（如果当前源码提供）
+
+            ## 注意
+
+            第一次刷入建议先完整测试：
+
+            1. WAN
+            2. QModem 自动识别
+            3. 自动 APN
+            4. QMI
+            5. MBIM
+            6. NCM
+            7. SMS
+            8. Wi-Fi
+            9. Docker
+            10. IPTV
+            11. Lucky
+            12. OpenClash
+
+          files: release/*
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+
+      # ============================================================
+      # 27. 编译诊断
+      # ============================================================
+      - name: 🩺 编译后诊断
+        if: always()
+        shell: bash
+        run: |
+          cd openwrt || exit 0
+
+          echo "=============================================="
+          echo "🩺 MWRT-STABLE 编译诊断"
+          echo "=============================================="
+
+          echo
+          echo "📌 内核："
+          grep -E \
+            'CONFIG_(LINUX_6_1|LINUX_6_6|TESTING_KERNEL)' \
+            .config 2>/dev/null || true
+
+          echo
+          echo "📌 QModem："
+          grep -E \
+            '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem-next|sms-forwarder-next|quectel-CM-5G-M)' \
+            .config 2>/dev/null || true
+
+          echo
+          echo "📌 TARGET："
+          grep '^CONFIG_TARGET_' .config 2>/dev/null | head -80 || true
+
+          echo
+          echo "📌 最近失败信息："
+
+          find build_dir \
+            -type f \
+            \( \
+              -name '*.rej' -o \
+              -name '*.log' \
+            \) \
+            2>/dev/null \
+            | head -50 || true
+
+          echo
+          echo "=============================================="
+          echo "🩺 诊断结束"
+          echo "=============================================="
+
+      # ============================================================
+      # 28. 保存失败日志
+      # ============================================================
+      - name: 🧾 上传失败日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MWRT-STABLE-build-logs-${{ github.run_number }}
+          path: |
+            openwrt/.config
+            openwrt/tmp/
+            openwrt/logs/
+            openwrt/build_dir/**/.rej
+          if-no-files-found: ignore
+          retention-days: 7
+          
