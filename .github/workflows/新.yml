@@ -1,4 +1,4 @@
-name: 🏗️ MWRT-DONGZAI 固件编译 - 极速增量 / 完全重编译 / 智能诊断
+name: 🏗️ MWRT-DONGZAI 固件编译 - 最终稳定版
 
 on:
   workflow_dispatch:
@@ -26,16 +26,12 @@ env:
   LEDE_REPO: https://github.com/coolsnowwolf/lede
   LEDE_BRANCH: master
 
-  # 编译参数
   MAKE_JOBS: 4
 
-  # 日志目录
   LOG_DIR: /tmp/mwrt-logs
 
-  # ccache
   CCACHE_MAXSIZE: 5G
   CCACHE_COMPRESS: 1
-
 
 jobs:
 
@@ -47,7 +43,6 @@ jobs:
 
     permissions:
       contents: write
-
 
     steps:
 
@@ -61,10 +56,6 @@ jobs:
           set -Eeuo pipefail
 
           mkdir -p "$LOG_DIR"
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🏗️ MWRT-DONGZAI 固件工厂"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           DEVICE="${{ github.event.inputs.device }}"
           BUILD_MODE="${{ github.event.inputs.build_mode }}"
@@ -87,11 +78,15 @@ jobs:
               ;;
 
             *)
-              echo "❌ 未知设备: $DEVICE"
+              echo "❌ 未知设备：$DEVICE"
               exit 1
               ;;
 
           esac
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🏗️ MWRT-DONGZAI 固件工厂"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           echo "📦 设备       : $DNAME"
           echo "🔧 规格       : $DSPEC"
@@ -99,7 +94,6 @@ jobs:
           echo "🧵 MAKE_JOBS  : $MAKE_JOBS"
           echo "🐧 Runner     : $(uname -a)"
           echo "🕐 时间       : $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "🔖 标识       : MWRT-DONGZAI"
 
           {
             echo "DEVICE=$DEVICE"
@@ -111,7 +105,7 @@ jobs:
 
 
       # ==========================================================
-      # 02. 检出 MWRT 仓库
+      # 02. 检出 MWRT
       # ==========================================================
 
       - name: 📥 检出 MWRT 仓库
@@ -119,7 +113,7 @@ jobs:
 
 
       # ==========================================================
-      # 03. 检查配置文件
+      # 03. 检查配置
       # ==========================================================
 
       - name: 🔎 检查 MWRT 配置
@@ -152,24 +146,15 @@ jobs:
           echo "✅ diy-part1.sh"
           echo "✅ diy-part2.sh"
 
-          echo
-          echo "── 配置 SHA256 ──"
-          sha256sum "$DEVICE.config"
-
-          echo
-          echo "── DIY SHA256 ──"
-          sha256sum diy-part1.sh
-          sha256sum diy-part2.sh
-
           {
             sha256sum "$DEVICE.config"
             sha256sum diy-part1.sh
             sha256sum diy-part2.sh
-          } > "$LOG_DIR/mwrt-hash.txt"
+          } | tee "$LOG_DIR/mwrt-hash.txt"
 
 
       # ==========================================================
-      # 04. 计算配置 Hash
+      # 04. 缓存 Hash
       # ==========================================================
 
       - name: 🔐 生成缓存哈希
@@ -210,17 +195,13 @@ jobs:
 
 
       # ==========================================================
-      # 05. 释放磁盘
+      # 05. 释放 Runner 磁盘
       # ==========================================================
 
       - name: 🧹 释放 Runner 磁盘
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🧹 释放磁盘空间"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           sudo rm -rf \
             /usr/share/dotnet \
@@ -230,7 +211,6 @@ jobs:
             || true
 
           sudo docker image prune -a -f || true
-
           sudo apt-get clean || true
 
           echo
@@ -243,17 +223,13 @@ jobs:
 
 
       # ==========================================================
-      # 06. 安装编译依赖
+      # 06. 编译环境
       # ==========================================================
 
       - name: ⚙️ 初始化编译环境
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "⚙️ 安装 OpenWrt 编译依赖"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           sudo apt-get update -q
 
@@ -293,12 +269,9 @@ jobs:
             gzip
 
           echo
-          echo "── 工具版本 ──"
-
           git --version
           gcc --version | head -1
           clang --version | head -1
-          make --version | head -1 || true
           ccache --version | head -1
           python3 --version
 
@@ -307,20 +280,18 @@ jobs:
       # 07. Clean 模式
       # ==========================================================
 
-      - name: 🧹 Clean 模式 - 删除全部构建缓存
+      - name: 🧹 Clean 模式
         if: github.event.inputs.build_mode == 'clean'
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "🧹 CLEAN MODE"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           sudo rm -rf openwrt
           rm -rf ~/.ccache
 
-          echo "✅ OpenWrt 源码目录已清理"
+          echo "✅ OpenWrt 构建目录已清理"
           echo "✅ ccache 已清理"
 
 
@@ -332,10 +303,6 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📦 克隆 LEDE"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           rm -rf openwrt
 
@@ -354,17 +321,15 @@ jobs:
           echo "LEDE_COMMIT=$LEDE_COMMIT" >> "$GITHUB_ENV"
           echo "LEDE_SHORT=$LEDE_SHORT" >> "$GITHUB_ENV"
 
-          echo
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "LEDE Commit : $LEDE_COMMIT"
-          echo "LEDE Short   : $LEDE_SHORT"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "LEDE_COMMIT=$LEDE_COMMIT"
+          echo "LEDE_SHORT=$LEDE_SHORT"
 
-          git log --oneline -5 | tee "$LOG_DIR/lede-log.txt"
+          git log --oneline -5 |
+            tee "$LOG_DIR/lede-log.txt"
 
 
       # ==========================================================
-      # 09. 保存源码信息
+      # 09. 源码信息
       # ==========================================================
 
       - name: 🧾 保存源码环境信息
@@ -406,10 +371,6 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔧 DIY PART 1"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
           chmod +x diy-part1.sh
 
           cd openwrt
@@ -429,7 +390,7 @@ jobs:
 
 
       # ==========================================================
-      # 11. Feeds 缓存
+      # 11. Feeds Cache
       # ==========================================================
 
       - name: ♻️ 恢复 Feeds 缓存
@@ -463,48 +424,42 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           if [ "${{ github.event.inputs.build_mode }}" = "clean" ]; then
-            echo "🧹 Clean 模式：强制更新 Feeds"
 
-            ./scripts/feeds update -a 2>&1 |
+            ./scripts/feeds update -a \
+              2>&1 |
               tee "$LOG_DIR/feeds-update.log"
 
             STATUS=${PIPESTATUS[0]}
-
             [ "$STATUS" -eq 0 ] || exit "$STATUS"
 
-            ./scripts/feeds install -a 2>&1 |
+            ./scripts/feeds install -a \
+              2>&1 |
               tee "$LOG_DIR/feeds-install.log"
 
             STATUS=${PIPESTATUS[0]}
-
             [ "$STATUS" -eq 0 ] || exit "$STATUS"
 
           elif [ "${{ steps.feeds_restore.outputs.cache-hit }}" != "true" ]; then
 
-            echo "📥 Feeds 缓存未命中：更新 Feeds"
-
-            ./scripts/feeds update -a 2>&1 |
+            ./scripts/feeds update -a \
+              2>&1 |
               tee "$LOG_DIR/feeds-update.log"
 
             STATUS=${PIPESTATUS[0]}
-
             [ "$STATUS" -eq 0 ] || exit "$STATUS"
 
-            ./scripts/feeds install -a 2>&1 |
+            ./scripts/feeds install -a \
+              2>&1 |
               tee "$LOG_DIR/feeds-install.log"
 
             STATUS=${PIPESTATUS[0]}
-
             [ "$STATUS" -eq 0 ] || exit "$STATUS"
 
           else
 
-            echo "⚡ Feeds 缓存命中：跳过更新"
+            echo "⚡ Feeds 缓存命中，跳过更新"
 
           fi
-
-          echo
-          echo "── 当前 Feeds ──"
 
           ./scripts/feeds list -s |
             tee "$LOG_DIR/feeds-list.txt"
@@ -535,11 +490,17 @@ jobs:
               cp re-sp-01b.config openwrt/.config
               ;;
 
+            *)
+              echo "❌ 未知设备"
+              exit 1
+              ;;
+
           esac
 
           if [ "$DEVICE" = "re-sp-01b" ]; then
 
-            grep -v "CONFIG_TARGET_.*_DEVICE_" \
+            grep -v \
+              "CONFIG_TARGET_.*_DEVICE_" \
               openwrt/.config \
               > /tmp/.config_patched
 
@@ -551,9 +512,8 @@ jobs:
 
           fi
 
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🎛️ DEVICE CONFIG"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo
+          echo "── TARGET ──"
 
           grep "CONFIG_TARGET_" openwrt/.config |
             grep -v "^#" |
@@ -577,9 +537,13 @@ jobs:
 
             wh3000|wh3000pro)
 
-              sed -i '/^CONFIG_TESTING_KERNEL=/d' .config
+              sed -i \
+                '/^CONFIG_TESTING_KERNEL=/d' \
+                .config
 
-              echo "CONFIG_TESTING_KERNEL=y" >> .config
+              echo \
+                "CONFIG_TESTING_KERNEL=y" \
+                >> .config
 
               ;;
 
@@ -591,7 +555,9 @@ jobs:
                 -e '/^CONFIG_LINUX_6_18=/d' \
                 .config
 
-              echo "# CONFIG_TESTING_KERNEL is not set" >> .config
+              echo \
+                "# CONFIG_TESTING_KERNEL is not set" \
+                >> .config
 
               ;;
 
@@ -603,7 +569,8 @@ jobs:
           grep -E \
             'CONFIG_LINUX_|CONFIG_TESTING_KERNEL' \
             .config |
-            tee "$LOG_DIR/kernel-config.txt" || true
+            tee "$LOG_DIR/kernel-config.txt" \
+            || true
 
 
       # ==========================================================
@@ -633,11 +600,8 @@ jobs:
           fi
 
           echo "✅ DIY Part 2 完成"
-
-
-             # ==========================================================
-            # ==========================================================
-      # 16. DEFCONFIG
+                # ==========================================================
+      # 16. DEFCONFIG + QMODEM FINAL
       # ==========================================================
 
       - name: 📋 生成最终配置
@@ -653,40 +617,28 @@ jobs:
 
           make defconfig \
             2>&1 |
-            tee "$LOG_DIR/defconfig.log"
+            tee "$LOG_DIR/defconfig-1.log"
 
           STATUS=${PIPESTATUS[0]}
 
           if [ "$STATUS" -ne 0 ]; then
-            echo "❌ make defconfig 失败"
+            echo "❌ 第一次 make defconfig 失败"
             exit "$STATUS"
           fi
 
-          echo
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📡 QMODEM NEXT FINAL CONFIG"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-          # ==========================================================
-          # 清理旧版 QModem / 冲突组件
-          #
-          # 旧版：
-          #   luci-app-qmodem
-          #   luci-app-qmodem-sms
-          #   luci-app-qmodem-ttl
-          #
-          # SIP / VOIP：
-          #   qmodem-sipd
-          #   qmodem-voip
-          #
-          # 这些全部不进入 WH3000 Pro 的 Next 方案
-          # ==========================================================
+          # ========================================================
+          # 清理所有旧版 QModem
+          # ========================================================
 
           sed -i \
             -e '/^CONFIG_PACKAGE_luci-app-qmodem=/d' \
             -e '/^CONFIG_PACKAGE_luci-app-qmodem-next=/d' \
             -e '/^CONFIG_PACKAGE_luci-app-qmodem-sms=/d' \
             -e '/^CONFIG_PACKAGE_luci-app-qmodem-ttl=/d' \
+            -e '/^CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn=/d' \
+            -e '/^CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn=/d' \
+            -e '/^CONFIG_PACKAGE_luci-i18n-qmodem-ttl-zh-cn=/d' \
             -e '/^CONFIG_PACKAGE_qmodem=/d' \
             -e '/^CONFIG_PACKAGE_qmodem-sipd=/d' \
             -e '/^CONFIG_PACKAGE_qmodem-voip=/d' \
@@ -694,9 +646,10 @@ jobs:
             -e '/^CONFIG_PACKAGE_quectel-CM-5G-M=/d' \
             .config
 
-          # ==========================================================
-          # 写入最终 QModem Next 配置
-          # ==========================================================
+
+          # ========================================================
+          # 写入最终 QModem Next
+          # ========================================================
 
           cat >> .config << 'EOF'
 
@@ -704,28 +657,35 @@ jobs:
           # QModem Next
           # ============================================================
 
-          # QModem 核心
           CONFIG_PACKAGE_qmodem=y
 
-          # 新版 QModem Next LuCI
           CONFIG_PACKAGE_luci-app-qmodem-next=y
 
-          # SMS Forwarder Next
           CONFIG_PACKAGE_sms-forwarder-next=y
 
-          # Quectel 5G 拨号工具
           CONFIG_PACKAGE_quectel-CM-5G-M=y
 
+
           # ============================================================
-          # 明确关闭旧版 QModem
+          # 关闭旧版 QModem
           # ============================================================
 
           # CONFIG_PACKAGE_luci-app-qmodem is not set
           # CONFIG_PACKAGE_luci-app-qmodem-sms is not set
           # CONFIG_PACKAGE_luci-app-qmodem-ttl is not set
 
+
           # ============================================================
-          # 不使用 SIP / VOIP
+          # 关闭旧版 QModem 中文语言包
+          # ============================================================
+
+          # CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn is not set
+          # CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn is not set
+          # CONFIG_PACKAGE_luci-i18n-qmodem-ttl-zh-cn is not set
+
+
+          # ============================================================
+          # 关闭 SIP / VOIP
           # ============================================================
 
           # CONFIG_PACKAGE_qmodem-sipd is not set
@@ -733,90 +693,199 @@ jobs:
 
           EOF
 
+
+          # ========================================================
+          # 第二次 defconfig
+          # ========================================================
+
           echo
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔎 QMODEM FINAL CHECK"
+          echo "📋 SECOND MAKE DEFCONFIG"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          make defconfig \
+            2>&1 |
+            tee "$LOG_DIR/defconfig-2.log"
+
+          STATUS=${PIPESTATUS[0]}
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "❌ 第二次 make defconfig 失败"
+            exit "$STATUS"
+          fi
+
+
+          # ========================================================
+          # QMODEM 最终检查
+          # ========================================================
+
+          echo
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📡 QMODEM NEXT FINAL CHECK"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           echo
-          echo "── QMODEM PACKAGE STATUS ──"
+          echo "── QModem ──"
 
           grep -E \
-            '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|sms-forwarder-next|quectel-CM-5G-M)' \
+            '^CONFIG_PACKAGE_(qmodem|qmodem-smsd|qmodem-settings|qmodem-seal|libqmodem-sms|luci-app-qmodem|sms-forwarder-next|quectel-CM-5G-M)' \
             .config |
-            tee "$LOG_DIR/final-qmodem.txt" || true
+            tee "$LOG_DIR/final-qmodem.txt" \
+            || true
 
-          echo
-          echo "── LEGACY QMODEM CHECK ──"
 
-          if grep -q '^CONFIG_PACKAGE_luci-app-qmodem=y' .config; then
-            echo "❌ ERROR：旧版 luci-app-qmodem 仍然启用"
+          # ========================================================
+          # 旧版主程序
+          # ========================================================
+
+          if grep -q \
+            '^CONFIG_PACKAGE_luci-app-qmodem=y' \
+            .config; then
+
+            echo "❌ 旧版 luci-app-qmodem 仍然启用"
             exit 1
+
           fi
 
-          if grep -q '^CONFIG_PACKAGE_luci-app-qmodem-sms=y' .config; then
-            echo "❌ ERROR：旧版 luci-app-qmodem-sms 仍然启用"
+
+          if grep -q \
+            '^CONFIG_PACKAGE_luci-app-qmodem-sms=y' \
+            .config; then
+
+            echo "❌ 旧版 luci-app-qmodem-sms 仍然启用"
             exit 1
+
           fi
 
-          if grep -q '^CONFIG_PACKAGE_luci-app-qmodem-ttl=y' .config; then
-            echo "❌ ERROR：旧版 luci-app-qmodem-ttl 仍然启用"
+
+          if grep -q \
+            '^CONFIG_PACKAGE_luci-app-qmodem-ttl=y' \
+            .config; then
+
+            echo "❌ 旧版 luci-app-qmodem-ttl 仍然启用"
             exit 1
+
           fi
 
-          echo "✅ 旧版 QModem 全部关闭"
+          echo "✅ 旧版 QModem 主程序全部关闭"
 
-          echo
-          echo "── SIP / VOIP CHECK ──"
 
-          if grep -q '^CONFIG_PACKAGE_qmodem-sipd=y' .config; then
-            echo "❌ ERROR：qmodem-sipd 仍然启用"
+          # ========================================================
+          # 旧版中文语言包
+          # ========================================================
+
+          if grep -q \
+            '^CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn=y' \
+            .config; then
+
+            echo "❌ 旧版 luci-i18n-qmodem-zh-cn 仍然启用"
             exit 1
+
           fi
 
-          if grep -q '^CONFIG_PACKAGE_qmodem-voip=y' .config; then
-            echo "❌ ERROR：qmodem-voip 仍然启用"
+
+          if grep -q \
+            '^CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn=y' \
+            .config; then
+
+            echo "❌ 旧版 luci-i18n-qmodem-sms-zh-cn 仍然启用"
             exit 1
+
+          fi
+
+
+          if grep -q \
+            '^CONFIG_PACKAGE_luci-i18n-qmodem-ttl-zh-cn=y' \
+            .config; then
+
+            echo "❌ 旧版 luci-i18n-qmodem-ttl-zh-cn 仍然启用"
+            exit 1
+
+          fi
+
+          echo "✅ 旧版 QModem 中文语言包全部关闭"
+
+
+          # ========================================================
+          # SIP / VOIP
+          # ========================================================
+
+          if grep -q \
+            '^CONFIG_PACKAGE_qmodem-sipd=y' \
+            .config; then
+
+            echo "❌ qmodem-sipd 仍然启用"
+            exit 1
+
+          fi
+
+
+          if grep -q \
+            '^CONFIG_PACKAGE_qmodem-voip=y' \
+            .config; then
+
+            echo "❌ qmodem-voip 仍然启用"
+            exit 1
+
           fi
 
           echo "✅ SIP / VOIP 全部关闭"
 
-          echo
-          echo "── NEXT UI CHECK ──"
 
-          if ! grep -q '^CONFIG_PACKAGE_luci-app-qmodem-next=y' .config; then
-            echo "❌ ERROR：luci-app-qmodem-next 未启用"
-            exit 1
-          fi
+          # ========================================================
+          # Next UI
+          # ========================================================
 
-          if ! grep -q '^CONFIG_PACKAGE_qmodem=y' .config; then
-            echo "❌ ERROR：qmodem 核心组件未启用"
-            exit 1
-          fi
+          grep -q \
+            '^CONFIG_PACKAGE_luci-app-qmodem-next=y' \
+            .config || {
+              echo "❌ luci-app-qmodem-next 未启用"
+              exit 1
+            }
 
-          if ! grep -q '^CONFIG_PACKAGE_sms-forwarder-next=y' .config; then
-            echo "❌ ERROR：sms-forwarder-next 未启用"
-            exit 1
-          fi
 
-          if ! grep -q '^CONFIG_PACKAGE_quectel-CM-5G-M=y' .config; then
-            echo "❌ ERROR：quectel-CM-5G-M 未启用"
-            exit 1
-          fi
+          grep -q \
+            '^CONFIG_PACKAGE_qmodem=y' \
+            .config || {
+              echo "❌ qmodem 核心未启用"
+              exit 1
+            }
 
-          echo "✅ QModem Next 核心配置检查通过"
 
-          echo
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📋 FINAL CONFIG SUMMARY"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          grep -q \
+            '^CONFIG_PACKAGE_sms-forwarder-next=y' \
+            .config || {
+              echo "❌ sms-forwarder-next 未启用"
+              exit 1
+            }
+
+
+          grep -q \
+            '^CONFIG_PACKAGE_quectel-CM-5G-M=y' \
+            .config || {
+              echo "❌ quectel-CM-5G-M 未启用"
+              exit 1
+            }
+
+          echo "✅ QModem Next 核心检查通过"
+
+
+          # ========================================================
+          # 保存最终配置
+          # ========================================================
+
+          cp .config \
+            "$LOG_DIR/final.config"
+
 
           echo
           echo "── TARGET ──"
 
-          grep "CONFIG_TARGET_" .config |
+          grep '^CONFIG_TARGET_' .config |
             head -20 |
-            tee "$LOG_DIR/final-target.txt" || true
+            tee "$LOG_DIR/final-target.txt" \
+            || true
+
 
           echo
           echo "── KERNEL ──"
@@ -824,7 +893,9 @@ jobs:
           grep -E \
             'CONFIG_LINUX_|CONFIG_TESTING_KERNEL' \
             .config |
-            tee "$LOG_DIR/final-kernel.txt" || true
+            tee "$LOG_DIR/final-kernel.txt" \
+            || true
+
 
           echo
           echo "── WIFI ──"
@@ -832,33 +903,59 @@ jobs:
           grep -E \
             'CONFIG_PACKAGE_(wifi-scripts|kmod-mac80211|kmod-cfg80211|kmod-mt76|kmod-mt7915e|kmod-mt7981-firmware|wireless-regdb|iwinfo)' \
             .config |
-            tee "$LOG_DIR/final-wifi.txt" || true
+            tee "$LOG_DIR/final-wifi.txt" \
+            || true
 
-          echo
-          echo "── QMODEM ──"
-
-          grep -E \
-            '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|sms-forwarder-next|quectel-CM-5G-M)' \
-            .config |
-            tee "$LOG_DIR/final-qmodem.txt" || true
-
-          echo
-          echo "── QMODEM FORBIDDEN PACKAGES ──"
-
-          grep -E \
-            '^CONFIG_PACKAGE_(luci-app-qmodem$|luci-app-qmodem-sms|luci-app-qmodem-ttl|qmodem-sipd|qmodem-voip)' \
-            .config \
-            || echo "✅ 没有发现旧版 / SIP / VOIP 冲突包"
 
           echo
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ QModem Next 最终配置检查通过"
+          echo "✅ FINAL CONFIG 完成"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-          cp .config "$LOG_DIR/final.config"
 
       # ==========================================================
-      # 18. DL 缓存
+      # 17. QModem 依赖诊断
+      # ==========================================================
+
+      - name: 🔎 QModem 依赖诊断
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd openwrt
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔎 QMODEM DEPENDENCY CHECK"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ -f tmp/.config-package.in ]; then
+
+            grep -ni \
+              -E \
+              'qmodem|quectel|mhi-wwan' \
+              tmp/.config-package.in |
+              head -500 |
+              tee "$LOG_DIR/dependency-qmodem.txt" \
+              || true
+
+          fi
+
+          echo
+          echo "── QModem Makefile ──"
+
+          grep -Rni \
+            -E \
+            'kmod-mhi-wwan|quectel-CM-5G' \
+            package/feeds/qmodem \
+            feeds \
+            2>/dev/null |
+            head -200 |
+            tee "$LOG_DIR/qmodem-makefile-deps.txt" \
+            || true
+
+
+      # ==========================================================
+      # 18. DL Cache
       # ==========================================================
 
       - name: ♻️ 恢复下载缓存
@@ -875,7 +972,7 @@ jobs:
 
 
       # ==========================================================
-      # 19. BUILD CACHE
+      # 19. Build Cache
       # ==========================================================
 
       - name: ♻️ 恢复编译缓存
@@ -896,7 +993,7 @@ jobs:
 
 
       # ==========================================================
-      # 20. CCACHE
+      # 20. ccache
       # ==========================================================
 
       - name: ♻️ 恢复 ccache
@@ -914,7 +1011,7 @@ jobs:
 
 
       # ==========================================================
-      # 21. 配置 CCACHE
+      # 21. 配置 ccache
       # ==========================================================
 
       - name: ⚡ 配置 ccache
@@ -928,8 +1025,6 @@ jobs:
           ccache --set-config=compression=true
 
           echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          echo "CCACHE_MAXSIZE=$CCACHE_MAXSIZE" >> "$GITHUB_ENV"
-          echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
 
           echo
           ccache -s
@@ -970,11 +1065,10 @@ jobs:
             -type f \
             -size -1024c \
             -exec ls -lh {} \; \
-            2>/dev/null || true
-
-
-      # ==========================================================
-      # 23. 编译
+            2>/dev/null \
+            || true
+                  # ==========================================================
+      # 23. 编译固件
       # ==========================================================
 
       - name: 🔨 编译固件
@@ -993,19 +1087,19 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           echo "🧵 JOBS = $MAKE_JOBS"
-          echo "🐧 Kernel:"
+
           make kernelversion || true
 
           echo
-          echo "💾 磁盘:"
+          echo "💾 磁盘"
           df -h
 
           echo
-          echo "🧠 内存:"
+          echo "🧠 内存"
           free -h
 
           echo
-          echo "📦 ccache:"
+          echo "📦 ccache"
           ccache -s
 
           BUILD_START=$(date +%s)
@@ -1030,20 +1124,20 @@ jobs:
           BUILD_END=$(date +%s)
           BUILD_TIME=$((BUILD_END - BUILD_START))
 
-          echo
-          echo "⏱️ 编译耗时：${BUILD_TIME} 秒"
-
           echo "BUILD_STATUS=$BUILD_STATUS" \
             > "$LOG_DIR/build-status.txt"
 
           echo "BUILD_TIME=$BUILD_TIME" \
             >> "$LOG_DIR/build-status.txt"
 
+          echo
+          echo "⏱️ 编译耗时：${BUILD_TIME} 秒"
+
           if [ "$BUILD_STATUS" -eq 0 ]; then
 
             echo
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "✅ 并行编译成功"
+            echo "✅ 编译成功"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
             ccache -s
@@ -1053,9 +1147,9 @@ jobs:
           fi
 
 
-          # ======================================================
-          # 并行失败
-          # ======================================================
+          # ========================================================
+          # 编译失败
+          # ========================================================
 
           echo
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1065,8 +1159,8 @@ jobs:
           echo
           echo "── 最后 200 行 ──"
 
-          tail -200 "$LOG_DIR/build.log" \
-            | tee "$LOG_DIR/build-tail-200.txt"
+          tail -200 "$LOG_DIR/build.log" |
+            tee "$LOG_DIR/build-tail-200.txt"
 
 
           echo
@@ -1074,15 +1168,15 @@ jobs:
 
           grep -i -E \
             'error:|ERROR:|Error [0-9]+|failed|cannot find|cannot satisfy|unresolved|No rule to make|No such file|Collected errors|dependency' \
-            "$LOG_DIR/build.log" \
-            | tail -200 \
-            | tee "$LOG_DIR/build-errors.txt" \
+            "$LOG_DIR/build.log" |
+            tail -300 |
+            tee "$LOG_DIR/build-errors.txt" \
             || true
 
 
           echo
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔁 启动单线程诊断编译"
+          echo "🔁 单线程诊断编译"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           set +e
@@ -1104,22 +1198,20 @@ jobs:
 
           grep -i -E \
             'error:|ERROR:|Error [0-9]+|failed|cannot find|cannot satisfy|unresolved|No rule to make|No such file|Collected errors|dependency' \
-            "$LOG_DIR/build-retry-j1.log" \
-            | tail -300 \
-            | tee "$LOG_DIR/retry-errors.txt" \
+            "$LOG_DIR/build-retry-j1.log" |
+            tail -300 |
+            tee "$LOG_DIR/retry-errors.txt" \
             || true
 
 
           echo
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "❌ 编译最终失败"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           exit "$BUILD_STATUS"
 
 
       # ==========================================================
-      # 24. 编译成功后获取内核版本
+      # 24. 获取内核版本
       # ==========================================================
 
       - name: 🔍 获取完整内核版本
@@ -1155,9 +1247,7 @@ jobs:
           fi
 
           if [ -z "$KERNEL" ]; then
-
             KERNEL="Unknown"
-
           fi
 
           COMMIT=$(git rev-parse --short HEAD)
@@ -1168,10 +1258,9 @@ jobs:
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
 
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo
           echo "🐧 Kernel : $KERNEL"
           echo "🔖 Commit : $COMMIT"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 
       # ==========================================================
@@ -1204,7 +1293,8 @@ jobs:
 
           for f in *; do
 
-            newname=$(echo "$f" |
+            newname=$(
+              echo "$f" |
               sed \
                 -e 's/openwrt/MWRT-DONGZAI/g' \
                 -e 's/lede/MWRT-DONGZAI/g'
@@ -1216,6 +1306,7 @@ jobs:
 
           done
 
+          echo
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "📁 固件"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1223,7 +1314,7 @@ jobs:
           ls -lh
 
           if [ -z "$(ls -A .)" ]; then
-            echo "❌ 未找到固件文件"
+            echo "❌ 未找到固件"
             exit 1
           fi
 
@@ -1232,7 +1323,7 @@ jobs:
 
 
       # ==========================================================
-      # 26. 上传固件 Artifact
+      # 26. Artifact
       # ==========================================================
 
       - name: 📤 上传固件 Artifact
@@ -1246,7 +1337,7 @@ jobs:
 
 
       # ==========================================================
-      # 27. 创建 Release Tag
+      # 27. Release Tag
       # ==========================================================
 
       - name: 🏷️ 生成 Release 标签
@@ -1257,23 +1348,21 @@ jobs:
           set -Eeuo pipefail
 
           DEVICE="${{ github.event.inputs.device }}"
-
-          DATE=$(date +'%Y-%m-%d')
-          TIME=$(date +'%H%M')
-
           KERNEL="${{ steps.kernel.outputs.kernel }}"
 
-          TAG="MWRT-DONGZAI-${DEVICE^^}-K${KERNEL}-$(date +'%Y.%m.%d')-${TIME}"
+          DATE=$(date +'%Y.%m.%d')
+          TIME=$(date +'%H%M')
+
+          TAG="MWRT-DONGZAI-${DEVICE^^}-K${KERNEL}-${DATE}-${TIME}"
 
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "release_date=$DATE" >> "$GITHUB_OUTPUT"
 
           echo "🏷️ Release Tag:"
           echo "$TAG"
 
 
       # ==========================================================
-      # 28. 发布 Release
+      # 28. GitHub Release
       # ==========================================================
 
       - name: 🚀 发布到 GitHub Release
@@ -1297,19 +1386,18 @@ jobs:
             | 🔖 LEDE | ${{ steps.kernel.outputs.commit }} |
             | 🕐 编译时间 | ${{ steps.kernel.outputs.build_time }} |
             | ⚡ 编译模式 | ${{ github.event.inputs.build_mode }} |
-            | 🔖 标识 | MWRT-DONGZAI |
 
             ### 固件
 
             `*-squashfs-sysupgrade.bin`
 
-            ✅ 日常升级推荐使用此文件。
+            日常升级推荐使用此文件。
 
             ### 注意
 
-            - 刷机前建议备份原厂固件
+            - 刷机前请备份原厂固件
             - 首次刷机请确认设备型号
-            - sysupgrade 建议不要保留旧配置
+            - 建议不要保留旧配置
             - 不同硬件版本不要混刷
 
           generate_release_notes: false
@@ -1319,7 +1407,7 @@ jobs:
 
 
       # ==========================================================
-      # 29. 编译失败 / 成功都收集诊断信息
+      # 29. 最终诊断
       # ==========================================================
 
       - name: 🧪 收集最终诊断信息
@@ -1360,7 +1448,7 @@ jobs:
             uptime
 
             echo
-            echo "========== DISK OPENWRT =========="
+            echo "========== OPENWRT SIZE =========="
             du -sh openwrt 2>/dev/null
 
           } > "$LOG_DIR/final/system.txt"
@@ -1381,6 +1469,7 @@ jobs:
             cp .config \
               "$LOG_DIR/final/final.config" \
               2>/dev/null
+
 
             {
               echo "========== CONFIG PACKAGE =========="
@@ -1405,16 +1494,10 @@ jobs:
             } > "$LOG_DIR/final/config-summary.txt"
 
 
-            echo
-            echo "========== FEEDS =========="
-
             ./scripts/feeds list -s \
               > "$LOG_DIR/final/feeds.txt" \
               2>&1
 
-
-            echo
-            echo "========== PACKAGE DIRECTORIES =========="
 
             find package/feeds \
               -maxdepth 2 \
@@ -1423,19 +1506,13 @@ jobs:
               2>&1
 
 
-            echo
-            echo "========== TMP =========="
-
             find tmp \
               -maxdepth 3 \
-              -type f \
-              | head -500 \
+              -type f |
+              head -500 \
               > "$LOG_DIR/final/tmp-files.txt" \
               2>&1
 
-
-            echo
-            echo "========== PACKAGE ERRORS =========="
 
             grep -Rni \
               -E \
@@ -1445,9 +1522,6 @@ jobs:
               tail -500 \
               > "$LOG_DIR/final/tmp-errors.txt"
 
-
-            echo
-            echo "========== CONFIG PACKAGE DEPENDENCY =========="
 
             if [ -f tmp/.config-package.in ]; then
 
@@ -1463,18 +1537,21 @@ jobs:
           fi
 
 
+          find "$LOG_DIR" \
+            -type f \
+            -printf '%p %s bytes\n' |
+            sort \
+            > "$LOG_DIR/file-list.txt"
+
+
           echo
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "🧪 诊断信息收集完成"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-          find "$LOG_DIR" -type f -printf '%p %s bytes\n' |
-            sort \
-            > "$LOG_DIR/file-list.txt"
-
 
       # ==========================================================
-      # 30. 上传完整日志
+      # 30. 上传 DEBUG
       # ==========================================================
 
       - name: 📦 上传编译诊断包
@@ -1560,7 +1637,7 @@ jobs:
 
 
       # ==========================================================
-      # 35. 保存 CCACHE
+      # 35. 保存 ccache
       # ==========================================================
 
       - name: 💾 保存 ccache
@@ -1568,4 +1645,5 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.ccache
+
           key: ccache-${{ runner.os }}-${{ github.event.inputs.device }}-${{ steps.hash.outputs.config_hash }}-${{ steps.hash.outputs.diy_hash }}
